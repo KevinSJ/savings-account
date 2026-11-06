@@ -25,10 +25,14 @@ public interface SavingsAccountRepository extends JpaRepository<SavingsAccount, 
      * A transaction-scoped Postgres advisory lock (keyed on the customer name) closes that
      * race while remaining deadlock-free (single lock, always acquired before any read).
      *
+     * <p>The key folds the name through {@code lower()} to match the case-insensitive
+     * count semantics above - otherwise "Alice" and "ALICE" would take different locks
+     * while racing against the same quota.
+     *
      * <p>Alternatives considered (serialisable isolation + retry, customer-side rows to
      * pessimistically lock, DB triggers) are compared in docs/DESIGN-TRADEOFFS.md.
      */
-    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(:customerName, 0))",
+    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(lower(:customerName), 0))",
             nativeQuery = true)
     void acquireCustomerAccountLock(@Param("customerName") String customerName);
 }

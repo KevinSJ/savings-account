@@ -7,6 +7,7 @@ import java.util.Optional;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.core.io.Resource;
 import org.springframework.core.io.ResourceLoader;
 import org.springframework.stereotype.Component;
@@ -38,6 +39,7 @@ public class OffensiveWordFilter {
     private final Set<String> bannedWords;
     private final Set<String> bannedSkeletons;
 
+    @Autowired
     public OffensiveWordFilter(ResourceLoader resourceLoader) {
         this(readWords(resourceLoader, DEFAULT_WORD_LIST));
     }

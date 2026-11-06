@@ -1,7 +1,10 @@
 package com.takehome.savings.service;
 
+import com.takehome.savings.config.CacheConfig;
 import com.takehome.savings.domain.SavingsAccount;
 import com.takehome.savings.repository.SavingsAccountRepository;
+
+import org.springframework.cache.annotation.Cacheable;
 
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,8 +55,13 @@ public class AccountService {
 
     /**
      * Fetch one account by surrogate id.
-     * TODO(caching): wrap with a Redis cache once the cache configuration lands.
+     *
+     * <p>Cached in Redis ({@link com.takehome.savings.config.CacheConfig}): misses hit
+     * Postgres, hits are served from Redis; a Redis outage degrades to Postgres reads
+     * via the configured {@code CacheErrorHandler}. Not-found ids are never cached -
+     * they stay cheap rejects.
      */
+    @Cacheable(cacheNames = CacheConfig.ACCOUNTS_CACHE)
     @Transactional(readOnly = true)
     public SavingsAccount getById(long id) {
         return repository.findById(id)
