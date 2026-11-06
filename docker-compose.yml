@@ -28,5 +28,27 @@ services:
       timeout: 3s
       retries: 10
 
+  # The API itself, packaged per the requirement: whole app in Docker, Alpine base.
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: savings-api:1.0.0
+    container_name: savings-app
+    environment:
+      # In-container addressing: service names, not host-mapped ports.
+      DB_URL: jdbc:postgresql://postgres:5432/savings
+      DB_USER: savings
+      DB_PASSWORD: savings
+      REDIS_HOST: redis
+      REDIS_PORT: "6379"
+    ports:
+      - "${APP_HOST_PORT:-8080}:8080"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
 volumes:
   pgdata:

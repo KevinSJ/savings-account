@@ -1,7 +1,6 @@
 plugins {
     java
-    id("org.springframework.boot") version "3.5.16"
-    id("io.spring.dependency-management") version "1.1.7"
+    alias(libs.plugins.spring.boot)
 }
 
 group = "com.takehome"
@@ -10,8 +9,9 @@ version = "1.0.0"
 description = """
 Savings account API - Westpac take-home exercise.
 
-POST /api/v1/accounts   creates a savings account (validated request body)
-GET  /api/v1/accounts/{id}  fetches a savings account (Redis-cached)
+POST /api/v1/accounts                 creates a savings account (validated request body)
+GET  /api/v1/accounts/{id}            fetches a savings account (Redis-cached)
+GET  /api/v1/accounts/by-number/{n}   fetches by public account number (Redis-cached)
 """
 
 java {
@@ -26,26 +26,46 @@ repositories {
 }
 
 dependencies {
+    // Spring Boot's BOM governs every Spring artifact (managed versions only;
+    // no versions are declared inline anywhere in this file - see libs.versions.toml).
+    implementation(platform(libs.spring.boot.dependencies))
+
     // REST layer + bean validation (request-body validation lives here)
-    implementation("org.springframework.boot:spring-boot-starter-web")
-    implementation("org.springframework.boot:spring-boot-starter-validation")
+    implementation(libs.spring.boot.starter.web)
+    implementation(libs.spring.boot.starter.validation)
 
     // Persistence: JPA over a single Postgres table
-    implementation("org.springframework.boot:spring-boot-starter-data-jpa")
-    runtimeOnly("org.postgresql:postgresql")
+    implementation(libs.spring.boot.starter.data.jpa)
+    runtimeOnly(libs.postgresql.driver)
 
     // Caching: Redis-backed cache in front of GET reads
-    implementation("org.springframework.boot:spring-boot-starter-cache")
-    implementation("org.springframework.boot:spring-boot-starter-data-redis")
+    implementation(libs.spring.boot.starter.cache)
+    implementation(libs.spring.boot.starter.data.redis)
 
     // Observability: health probes include DataSource/Redis readiness
-    implementation("org.springframework.boot:spring-boot-starter-actuator")
+    implementation(libs.spring.boot.starter.actuator)
 
-    testImplementation("org.springframework.boot:spring-boot-starter-test")
-    testImplementation("org.springframework.boot:spring-boot-testcontainers")
-    testImplementation("org.testcontainers:junit-jupiter")
-    testImplementation("org.testcontainers:postgresql")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
+    testImplementation(platform(libs.spring.boot.dependencies))
+    testImplementation(libs.spring.boot.test)
+    testImplementation(libs.spring.boot.webmvc.test)
+    testImplementation(libs.spring.boot.data.jpa.test)
+    testImplementation(libs.spring.boot.jdbc.test)
+    testImplementation(libs.spring.boot.restclient) // RestTemplateBuilder moved out of core in Boot 4
+    testImplementation(libs.spring.boot.resttestclient)
+    testImplementation(libs.spring.boot.testcontainers)
+    testImplementation(libs.testcontainers.junit.jupiter)
+    testImplementation(libs.testcontainers.postgresql)
+    testRuntimeOnly(libs.junit.platform.launcher)
+}
+
+// Single deterministic boot artifact (the classic plain jar is disabled so the
+// Dockerfile can COPY a fixed name without a two-jar glob surprise).
+tasks.jar {
+    enabled = false
+}
+
+tasks.bootJar {
+    archiveFileName = "app.jar"
 }
 
 tasks.withType<Test> {

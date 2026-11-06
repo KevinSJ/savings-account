@@ -1,0 +1,33 @@
+# Version catalog: every dependency version lives here (project convention).
+[versions]
+# Spring ecosystem
+springBoot = "4.1.2"
+
+# Third-party runtime
+testcontainers = "1.21.4"
+
+[libraries]
+spring-boot-dependencies = { group = "org.springframework.boot", name = "spring-boot-dependencies", version.ref = "springBoot" }
+
+spring-boot-starter-web = { group = "org.springframework.boot", name = "spring-boot-starter-web" }
+spring-boot-starter-validation = { group = "org.springframework.boot", name = "spring-boot-starter-validation" }
+spring-boot-starter-data-jpa = { group = "org.springframework.boot", name = "spring-boot-starter-data-jpa" }
+spring-boot-starter-cache = { group = "org.springframework.boot", name = "spring-boot-starter-cache" }
+spring-boot-starter-data-redis = { group = "org.springframework.boot", name = "spring-boot-starter-data-redis" }
+spring-boot-starter-actuator = { group = "org.springframework.boot", name = "spring-boot-starter-actuator" }
+spring-boot-restclient = { group = "org.springframework.boot", name = "spring-boot-restclient" }
+postgresql-driver = { group = "org.postgresql", name = "postgresql" }
+
+spring-boot-test = { group = "org.springframework.boot", name = "spring-boot-starter-test" }
+# Boot 4 split the test slices into per-tech modules (see docs/DESIGN-TRADEOFFS.md D9).
+spring-boot-webmvc-test = { group = "org.springframework.boot", name = "spring-boot-webmvc-test" }
+spring-boot-data-jpa-test = { group = "org.springframework.boot", name = "spring-boot-data-jpa-test" }
+spring-boot-jdbc-test = { group = "org.springframework.boot", name = "spring-boot-jdbc-test" }
+spring-boot-resttestclient = { group = "org.springframework.boot", name = "spring-boot-resttestclient" }
+spring-boot-testcontainers = { group = "org.springframework.boot", name = "spring-boot-testcontainers" }
+testcontainers-junit-jupiter = { group = "org.testcontainers", name = "junit-jupiter", version.ref = "testcontainers" }
+testcontainers-postgresql = { group = "org.testcontainers", name = "postgresql", version.ref = "testcontainers" }
+junit-platform-launcher = { group = "org.junit.platform", name = "junit-platform-launcher" }
+
+[plugins]
+spring-boot = { id = "org.springframework.boot", version.ref = "springBoot" }

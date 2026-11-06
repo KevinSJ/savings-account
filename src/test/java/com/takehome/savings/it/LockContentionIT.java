@@ -10,7 +10,8 @@ import com.takehome.savings.support.AbstractIntegrationTest;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.SpringBootTest;
-import org.springframework.boot.test.web.client.TestRestTemplate;
+import org.springframework.boot.resttestclient.autoconfigure.AutoConfigureTestRestTemplate;
+import org.springframework.boot.resttestclient.TestRestTemplate;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 
@@ -21,6 +22,7 @@ import static org.assertj.core.api.Assertions.assertThat;
  * advisory lock must turn new creates into a BOUNDED, retryable 503 - not an
  * indefinite hang. Before the lock_timeout fix this request blocked forever.
  */
+@AutoConfigureTestRestTemplate
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 class LockContentionIT extends AbstractIntegrationTest {
 

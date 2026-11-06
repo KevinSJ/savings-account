@@ -49,8 +49,20 @@ curl -sS -X POST localhost:8080/api/v1/accounts \
 ### Fetch an account
 
 ```bash
-curl -sS localhost:8080/api/v1/accounts/1 | jq
+curl -sS localhost:8080/api/v1/accounts/1 | jq          # by id
+curl -sS localhost:8080/api/v1/accounts/by-number/325748979052 | jq   # by public number
 ```
+
+Responses carry `Cache-Control: no-store, private` (personal data).
+
+## Security posture (exercise scope)
+
+There is no authn/authz: the exercise defines no security actors. That means, read
+honestly: with sequential ids anyone who can reach the API can enumerate accounts
+and their customer names. Mitigations in scope are the `by-number` public lookup
+key and the no-store headers; the structural fixes (authentication, opaque
+identifiers, field-level authorisation) are documented in
+`docs/DESIGN-TRADEOFFS.md` (A7, future work) rather than faked here.
 
 - `200` served from Redis when cached (10-min TTL), Postgres otherwise; a dead Redis
   degrades silently to Postgres

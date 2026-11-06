@@ -65,7 +65,8 @@ POST /api/v1/accounts
   1. JSON decoded; bean validation on the record (mandatory name, optional
      nickname: 5..30 chars, @NotOffensive screen)
   2. AccountService.create (single Postgres transaction):
-       a. pg_advisory_xact_lock(lower(customer_name))  <- serialises racing opens
+       a. set_config(lock_timeout=2s) + pg_advisory_xact_lock(upper(canonical name))
+          <- serialises racing opens; bounded wait -> retryable 503 on contention
        b. countByCustomerNameIgnoreCase(name) >= 5  -> AccountLimitExceededException (409)
        c. generator yields 11 random digits + Luhn check digit
           (probe existsByAccountNumber, max 5 retries) -> AccountNumberAllocationException (503)
@@ -80,12 +81,13 @@ Steps 2a+2b are what make the quota race-free across app instances. A read-modif
 ## Read flow
 
 ```
-GET /api/v1/accounts/{id}
+GET /api/v1/accounts/{id}   (also GET /api/v1/accounts/by-number/{accountNumber})
   1. Redis lookup (typed JSON, 10-min TTL, prefix savings:accounts:)
   2. miss -> Postgres select; not found -> 404 problem (404s are not cached)
   3. hit: deserialised without touching Postgres
   Redis outage: CacheErrorHandler logs and falls through to Postgres - the cache
   is an optimisation, never a dependency (ResilienceCacheDownIT proves this).
+  Responses carry Cache-Control: no-store, private (personal data).
 ```
 
 ## Error model
@@ -96,6 +98,7 @@ All failures map to RFC 9457 `application/problem+json` with stable `type` URIs
 | Situation | Status | type |
 |---|---|---|
 | bean validation failures | 400 | `validation-failed` (+ `issues[]`) |
+| well-formed but semantically wrong (e.g. bad account-number format) | 400 | `invalid-request` |
 | unreadable/malformed JSON | 400 | `malformed-body` |
 | non-numeric path id | 400 | `invalid-parameter` |
 | unknown id | 404 | `account-not-found` |
@@ -103,7 +106,8 @@ All failures map to RFC 9457 `application/problem+json` with stable `type` URIs
 | quota exceeded | 409 | `account-limit-reached` |
 | unique-violation (rare backstop) | 409 | `conflict` |
 | Postgres unreachable / tx begin fails / timeout | 503 | `datastore-unavailable` (+ `retryable: true`) |
-| advisory-lock contention | 503 | `contention` |
+| advisory-lock wait expired (55P03 lock_timeout) | 503 | `contention` |
+| account-number probe-insert race lost | 503 | `allocation-collision` |
 | number allocation exhausted | 503 | `allocation-unavailable` |
 | anything else | 500 | `internal-error` (logged, never leaked) |
 
@@ -120,7 +124,7 @@ Single table `savings_accounts` (see `src/main/resources/db/schema.sql`):
 |---|---|
 | `id` | identity PK, server-generated |
 | `account_number` | unique, 12 digits ending in a Luhn check digit |
-| `customer_name` | mandatory; indexed for the quota count |
+| `customer_name` | mandatory; canonicalised (NFKC + whitespace collapse); served by a functional index on upper(customer_name) |
 | `nickname` | nullable; blank normalised to NULL |
 | `created_at` / `updated_at` | audit stamps |
 | `version` | optimistic-lock column, ready for a future mutation path |

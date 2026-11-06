@@ -8,13 +8,13 @@ choice can be swapped without touching the API contract.
 
 | # | Assumption | Rationale |
 |---|---|---|
-| A1 | A "customer" is identified by their (trimmed) name, case-insensitively | The spec defines no customer entity. Name-as-identity is intentionally crude; a real system would carry a `customer_id` FK. The quota code centralises this in one place to make the swap trivial. |
+| A1 | A "customer" is identified by their name, canonicalised (NFKC fold + whitespace-run collapse + strip) and matched case-insensitively | The spec defines no customer entity. Name-as-identity is intentionally crude; a real system would carry a `customer_id` FK. Post-review hardening: whitespace variants and unicode-equivalent spellings collapse to one identity (an earlier revision admitted "Alice  Tester" as a distinct customer - caught in review, covered by `AccountFlowIT.quotaSurvivesWhitespaceVariants`). |
 | A2 | The 5-account limit is per customer across the whole system, not per session/request | "customer cannot create more than 5 accounts" reads as a policy about the customer, not about transport sessions. |
 | A3 | Nickname checks apply only to the nickname, not the customer name | Spec says "ensure nickname not offensive". Applying the same screen to names is a one-line extension; name matching is riskier (false positives on real names). |
-| A4 | A blank (`""`/whitespace) nickname is invalid, not "absent" | Absence is expressed as JSON `null` / omitted field. If a client sends `""` they probably meant something; forcing an explicit choice removes ambiguity. Absent nicknames are stored as SQL `NULL`, not empty strings. |
+| A4 | A blank (`""`/whitespace) nickname is invalid, not "absent" | Absence is expressed as JSON `null` / omitted field. Enforced by stripping the nickname *before* bean validation, so a whitespace-only body fails `@Size(min=5)` with 400 (the first revision silently turned it into `null` + 201 - caught in review). Stored nicknames always honour the 5-30 contract. |
 | A5 | No money/balance/transaction operations | The spec asks only for create + read. Building a ledger (postings, balance, interest) would triple the surface without a requirement - see "future work". |
 | A6 | Account number format is internal-only (12 digits + Luhn) | No jurisdiction/IBAN scheme was specified. The generator is an interface; a country-specific scheme slots in behind it. |
-| A7 | HTTP is the only access path; no authn/authz layer | No requirement mentions security actors. A real deployment would front this with the bank's identity fabric; adding half-baked JWTs here would be theatre. |
+| A7 | HTTP is the only access path; no authn/authz layer | No requirement mentions security actors. A real deployment would front this with the bank's identity fabric. Honest consequence (added post-review): with sequential ids and no auth, an attacker can walk id space 1..N and harvest customer names + account numbers. Mitigations shipped: a `by-number` lookup key (random-looking, Luhn-checked) and `Cache-Control: no-store, private` on reads; the structural fix (opaque id/UUIDv7 keys, authn) belongs to a real identity layer and is stated here rather than pretended away. |
 
 ## Key decisions
 
@@ -41,11 +41,23 @@ exactly one lock before any read.
 - *Unique constraint on `(customer_name, ordinal)`*: clever but obscure; ordinal
   assignment still races without a lock.
 
-**Residual risk:** the key is the (hashed) name; two names hashing identically
-would serialise unnecessarily - harmless (locking "too much" only costs throughput).
-Hash collisions in `hashtextextended` are astronomically unlikely and benign in
-effect. Case handling: the lock key lower()s the name to match the case-insensitive
-count (proven by the mixed-case race in `ConcurrentAccountLimitIT`).
+**Residual risk:** the key is the (hashed) canonical name; two names hashing
+identically would serialise unnecessarily - harmless (locking "too much" only costs
+throughput). Case handling: lock key and count both fold with `upper()` over the
+canonical name (proven by the mixed-case race in `ConcurrentAccountLimitIT`).
+
+**Bounded wait (post-review).** `pg_advisory_xact_lock` would originally wait
+forever, making the 503-contention handler unreachable dead code. Every create
+transaction now sets `lock_timeout = 2s` (`set_config(..., is_local := true)`);
+an expired wait raises SQLState 55P03, which is classified explicitly (Spring's
+default translation misses it for PostgreSQL) into `LockContentionException`
+-> 503 `contention`, retryable. Proof: `LockContentionIT` holds the lock from a
+foreign session and asserts the bounded 503 plus recovery after release.
+
+**Known characteristic (accepted):** the lock is held for the whole transaction,
+including the count and the account-number probe; a hot customer queues against
+Hikari's bounded pool. The bound plus the small transaction keeps the worst case
+short; a customer-row pessimistic lock (future work #2) behaves the same way.
 
 ### D2 - Account numbers: random + Luhn, not a sequence
 
@@ -60,10 +72,14 @@ against the table (max 5 attempts), with the DB unique constraint as the last re
 
 ### D3 - Nickname offensiveness: local filter now, moderation service eventually
 
-**Chosen:** a classpath blocklist + a three-pass matcher (exact tokens after NFKC
-folding; a leetspeak-folded "skeleton" for glued obfuscation like `s-t-u-p-i-d`;
-substring restricted to >=5-letter terms to blunt Scunthorpe-class false positives
-- "hello" must not trip on "hell").
+**Chosen:** a classpath blocklist + three passes: exact tokens after NFKC folding;
+a letter-skeleton substring pass (>=5-letter terms) for glued obfuscation like
+`s-t-u-p-i-d`; and a leet-pattern pass (only when the input carries digits or
+`@$!|+`) where each >=4-letter banned word becomes a per-character ambiguity-class
+regex, so `h311`, `he11`, `d4mn`, `st0pid`, `bl00dy` are caught. The first revision
+had a single-target fold (`1->i`) that missed exactly those vectors and a test that
+masked the gap ("blo0dy h311" passed via `blo0dy` alone) - caught in review.
+Digit-free text keeps the strict passes only, preserving the Scunthorpe guard.
 
 **Rejected / deferred:** calling an external content-moderation API from a bean
 validator couples a validation hot path to network availability, and the spec asked
@@ -78,9 +94,13 @@ domain entity; 10-minute TTL; cache writes deferred to after-commit
 (`transactionAware()`); connectivity errors in the error handler are logged and
 swallowed so reads fall through to Postgres.
 
-- **Why cache the entity:** all-scalar, no lazy relations, read-only usage - safe.
-  If the entity ever grows relations or lazy state, move the cached shape to the
-  wire record instead (documented seam).
+- **Why cache the entity:** all-scalar, no lazy relations, read-only usage - safe,
+  with one caveat worth naming: the round-trip relies on reflective field access
+  because the entity deliberately has no public setters, so a malformed cache entry
+  could bypass the constructor's invariants. The `version` field is exposed via a
+  getter precisely so the cached snapshot carries it. If the entity ever grows
+  relations or lazy state, move the cached shape to an immutable snapshot record
+  (documented seam).
 - **Why TTL even without mutation endpoints yet:** the first `PATCH`/`PUT` will
   forget to invalidate something; the TTL bounds how long the bug can lie. Write
   paths should evict explicitly when they arrive.
@@ -105,6 +125,13 @@ per-context) and maps connection/tx/timeout failures to `503 datastore-unavailab
 with a `retryable: true` hint. 409 is reserved for real business conflicts; 404
 covers unknown ids AND unknown routes (a catch-all `Exception` handler must not
 swallow MVC's own 404s into 500s).
+
+Post-review refinements: `JpaSystemException` was removed from the transient
+bucket (it wraps deterministic persistence bugs - telling clients to retry those
+manufactures retry storms); a lost account-number probe-insert race maps to
+retryable 503 `allocation-collision` instead of blaming the caller with 409;
+integrity-violation logs redact digit runs so constraint keys (account numbers)
+stay out of logs.
 
 ### D6 - Bean validation at the edge, business rules in the service
 
@@ -147,7 +174,8 @@ live table later costs a migration plus backfill discipline. Cheap insurance.
    with a different payload, and an expiry column so a stuck in-flight key cannot
    wedge a customer forever.
 2. **Customer entity + FK**, replacing name-as-identity (A1) and switching the
-   quota lock to a row lock on the customer row.
+   quota lock to a row lock on the customer row; with it, opaque (UUIDv7-style)
+   identifiers for URLs replace sequential ids, closing the enumeration window.
 3. **Mutation endpoints** (`PATCH /nickname`, close account) with explicit cache
    eviction, optimistic-lock retry policy, and an event outbox for downstream
    consumers.

@@ -2,12 +2,12 @@ package com.takehome.savings.config;
 
 import java.time.Duration;
 
-import com.fasterxml.jackson.databind.ObjectMapper;
+import tools.jackson.databind.ObjectMapper;
 import com.takehome.savings.domain.SavingsAccount;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.boot.autoconfigure.cache.RedisCacheManagerBuilderCustomizer;
+import org.springframework.boot.cache.autoconfigure.RedisCacheManagerBuilderCustomizer;
 import org.springframework.cache.Cache;
 import org.springframework.cache.annotation.CachingConfigurer;
 import org.springframework.cache.annotation.EnableCaching;
@@ -15,7 +15,7 @@ import org.springframework.cache.interceptor.CacheErrorHandler;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 import org.springframework.data.redis.cache.RedisCacheConfiguration;
-import org.springframework.data.redis.serializer.Jackson2JsonRedisSerializer;
+import org.springframework.data.redis.serializer.JacksonJsonRedisSerializer;
 import org.springframework.data.redis.serializer.RedisSerializationContext;
 
 /**
@@ -26,7 +26,7 @@ import org.springframework.data.redis.serializer.RedisSerializationContext;
  *       yet, but a TTL keeps the design correct for when one arrives (write path would
  *       evict/update the entry; the TTL is the safety net for bugs and multi-node races).</li>
  *   <li><b>Typed serialisation:</b> the account cache serialises with
- *       {@link Jackson2JsonRedisSerializer} bound to the domain entity and Boot's
+ *       {@link JacksonJsonRedisSerializer} bound to the domain entity and Boot's
  *       {@link ObjectMapper} (Java time module included). No polymorphic type headers -
  *       the cache knows exactly one value shape. Caching a JPA entity is safe here
  *       because it is all scalar fields with no lazy relations; a fetch-joined or
@@ -49,7 +49,7 @@ public class CacheConfig implements CachingConfigurer {
 
     @Bean
     public RedisCacheManagerBuilderCustomizer accountsCacheCustomizer(ObjectMapper objectMapper) {
-        var serializer = new Jackson2JsonRedisSerializer<>(objectMapper, SavingsAccount.class);
+        var serializer = new JacksonJsonRedisSerializer<>(objectMapper, SavingsAccount.class);
         RedisSerializationContext.SerializationPair<SavingsAccount> values =
                 RedisSerializationContext.SerializationPair.fromSerializer(serializer);
 

@@ -1,0 +1,13 @@
+.git
+.gradle
+build/
+out/
+.toolchain/
+temp/
+docs/
+output/
+*.md
+!README.md
+.env
+.idea/
+.vscode/
