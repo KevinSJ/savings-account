@@ -32,4 +32,15 @@ public record CreateAccountRequest(
         @Size(min = 5, max = 30, message = "nickname must be between 5 and 30 characters")
         @NotOffensive
         String nickname) {
+
+    /**
+     * Nickname is stripped BEFORE validation so the stored value honours its own
+     * 5-30 contract and a whitespace-only nickname correctly fails {@code @Size}
+     * instead of slipping through as "5 characters of nothing" (review finding #3).
+     */
+    public CreateAccountRequest {
+        if (nickname != null) {
+            nickname = nickname.strip();
+        }
+    }
 }

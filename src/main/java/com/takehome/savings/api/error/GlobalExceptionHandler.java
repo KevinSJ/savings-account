@@ -5,6 +5,7 @@ import java.time.Instant;
 import java.util.List;
 
 import com.takehome.savings.service.AccountLimitExceededException;
+import com.takehome.savings.service.LockContentionException;
 import com.takehome.savings.service.AccountNotFoundException;
 import com.takehome.savings.service.AccountNumberAllocationException;
 
@@ -20,7 +21,6 @@ import org.springframework.http.HttpStatus;
 import org.springframework.http.ProblemDetail;
 import org.springframework.http.converter.HttpMessageNotReadableException;
 import org.springframework.jdbc.CannotGetJdbcConnectionException;
-import org.springframework.orm.jpa.JpaSystemException;
 import org.springframework.transaction.CannotCreateTransactionException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
@@ -114,8 +114,7 @@ public class GlobalExceptionHandler {
             DataAccessResourceFailureException.class,
             QueryTimeoutException.class,
             TransientDataAccessException.class,
-            RecoverableDataAccessException.class,
-            JpaSystemException.class
+            RecoverableDataAccessException.class
     })
     ProblemDetail onDatastoreUnavailable(Exception ex) {
         log.error("Datastore unavailable or transient failure: {}", ex.toString());
@@ -133,19 +132,34 @@ public class GlobalExceptionHandler {
     }
 
     /**
-     * Integrity violations are rare in the happy path (generator + advisory lock), so a
-     * 409 Conflict is the honest signal instead of pretending it is a server fault.
+     * Integrity violations are split by who is at fault (review finding #10):
+     * a duplicate <em>server-generated</em> account number is the allocator losing a
+     * probe-insert race - the caller did nothing wrong, so it maps to a retryable 503;
+     * any other integrity breach stays an honest 409 conflict.
      */
     @ExceptionHandler(DataIntegrityViolationException.class)
     ProblemDetail onIntegrityViolation(DataIntegrityViolationException ex) {
-        log.warn("Data integrity violation: {}", ex.getMostSpecificCause().getMessage());
+        String cause = String.valueOf(ex.getMostSpecificCause().getMessage());
+        log.warn("Data integrity violation: {}",
+                cause.replaceAll("\\d{5,}", "<redacted>")); // constraint values are PII-adjacent
+        if (cause.contains("uq_savings_accounts_account_number")) {
+            ProblemDetail collision = problem(HttpStatus.SERVICE_UNAVAILABLE, "allocation-collision",
+                    "Could not allocate a unique account number right now; please retry.");
+            collision.setProperty("retryable", true);
+            return collision;
+        }
         return problem(HttpStatus.CONFLICT, "conflict",
                 "The request conflicts with existing data.");
     }
 
-    /** Lock-contention guard rail: the advisory lock could not be taken in time. */
-    @ExceptionHandler(CannotAcquireLockException.class)
-    ProblemDetail onLockContention(CannotAcquireLockException ex) {
+    /**
+     * Lock-contention guard rail: the advisory lock could not be taken within the
+     * bounded wait (either a 55P03 lock timeout wrapped as
+     * {@link LockContentionException}, or an explicit CannotAcquireLockException).
+     * Postgres is healthy here - this lane is busy, so retryable is an honest hint.
+     */
+    @ExceptionHandler({CannotAcquireLockException.class, LockContentionException.class})
+    ProblemDetail onLockContention(Exception ex) {
         ProblemDetail problem = problem(HttpStatus.SERVICE_UNAVAILABLE, "contention",
                 "Too much contention on this customer right now; please retry.");
         problem.setProperty("retryable", true);

@@ -11,6 +11,7 @@ import jakarta.validation.Valid;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.http.CacheControl;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -51,9 +52,28 @@ public class AccountController {
         return ResponseEntity.created(location).body(body);
     }
 
-    /** Fetches one account by id. */
+    /**
+     * Fetches one account by id.
+     *
+     * <p>{@code Cache-Control: private, no-store}: the payload carries personal
+     * data (customer name, account number); intermediaries must not retain it
+     * (review finding #1 and the Cache-Control nit).
+     */
     @GetMapping("/{id}")
-    public AccountResponse get(@PathVariable long id) {
-        return AccountResponse.from(accountService.getById(id));
+    public ResponseEntity<AccountResponse> get(@PathVariable long id) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore().cachePrivate())
+                .body(AccountResponse.from(accountService.getById(id)));
+    }
+
+    /**
+     * Fetches one account by its public account number - the random-looking key
+     * callers should prefer over the sequential surrogate id (review finding #1).
+     */
+    @GetMapping("/by-number/{accountNumber}")
+    public ResponseEntity<AccountResponse> getByNumber(@PathVariable String accountNumber) {
+        return ResponseEntity.ok()
+                .cacheControl(CacheControl.noStore().cachePrivate())
+                .body(AccountResponse.from(accountService.getByAccountNumber(accountNumber)));
     }
 }

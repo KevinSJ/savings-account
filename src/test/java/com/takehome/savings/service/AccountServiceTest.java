@@ -10,6 +10,7 @@ import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.mockito.InOrder;
 import org.mockito.Mockito;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -45,6 +46,7 @@ class AccountServiceTest {
         SavingsAccount saved = service.create("  Alice Tester  ", "rainy-day");
 
         InOrder order = Mockito.inOrder(repository);
+        order.verify(repository).boundAdvisoryLockWait();
         order.verify(repository).acquireCustomerAccountLock("Alice Tester");
         order.verify(repository).countByCustomerNameIgnoreCase("Alice Tester");
         order.verify(repository).existsByAccountNumber("123456789012");
@@ -118,12 +120,60 @@ class AccountServiceTest {
     }
 
     @Test
+    @DisplayName("create: 55P03 lock timeout surfaces as LockContentionException, not outage")
+    void lockTimeoutIsClassifiedAsContention() throws java.sql.SQLException {
+        when(repository.countByCustomerNameIgnoreCase(anyString())).thenReturn(0L);
+        Mockito.doThrow(new RuntimeException(
+                // Postgres signals an expired lock_timeout with SQLState 55P03.
+                new java.sql.SQLException("canceling statement due to lock timeout", "55P03", 0)))
+                .when(repository).acquireCustomerAccountLock(anyString());
+
+        assertThatThrownBy(() -> service.create("Busy Bella", null))
+                .isInstanceOfSatisfying(LockContentionException.class,
+                        ex -> assertThat(ex.getWaited()).hasSeconds(2));
+        verify(repository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("create: non-timeout persistence errors keep their original type")
+    void otherDatastoreErrorsAreNotRelabelled() {
+        when(repository.countByCustomerNameIgnoreCase(anyString())).thenReturn(0L);
+        Mockito.doThrow(new DataAccessResourceFailureException("down"))
+                .when(repository).acquireCustomerAccountLock(anyString());
+
+        assertThatThrownBy(() -> service.create("Bella", null))
+                .isInstanceOf(org.springframework.dao.DataAccessResourceFailureException.class);
+    }
+
+    @Test
     @DisplayName("create: blank customer name is rejected before touching the database")
     void blankNameRejected() {
         assertThatThrownBy(() -> service.create("   ", null))
                 .isInstanceOf(IllegalArgumentException.class);
         verify(repository, never()).acquireCustomerAccountLock(anyString());
         verify(repository, never()).save(any());
+    }
+
+    @Test
+    @DisplayName("getByAccountNumber: malformed number rejected without a datastore hit")
+    void getByAccountNumberRejectsMalformed() {
+        assertThatThrownBy(() -> service.getByAccountNumber("325748979051"))
+                .isInstanceOf(IllegalArgumentException.class);
+        verify(repository, never()).findByAccountNumber(anyString());
+    }
+
+    @Test
+    @DisplayName("getByAccountNumber: valid number found/missing branches")
+    void getByAccountNumberBranches() {
+        java.util.Optional<SavingsAccount> entity =
+                java.util.Optional.of(SavingsAccount.openNew("325748979052", "Alice", null));
+        when(repository.findByAccountNumber("325748979052")).thenReturn(entity);
+        when(repository.findByAccountNumber("629054787375")).thenReturn(java.util.Optional.empty());
+
+        assertThat(service.getByAccountNumber("325748979052")).isSameAs(entity.get());
+        assertThatThrownBy(() -> service.getByAccountNumber("629054787375"))
+                .isInstanceOf(AccountNotFoundException.class)
+                .hasMessage("Savings account 629054787375 does not exist");
     }
 
     @Test

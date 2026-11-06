@@ -14,7 +14,8 @@ CREATE TABLE IF NOT EXISTS savings_accounts (
     CONSTRAINT uq_savings_accounts_account_number UNIQUE (account_number)
 );
 
--- count-by-customer lookups (max-5 rule) filter on this column.
--- Not case-collated because matching happens in JPA (LOWER()) at this table's scale.
-CREATE INDEX IF NOT EXISTS idx_savings_accounts_customer_name
-    ON savings_accounts (customer_name);
+-- count-by-customer lookups (max-5 rule) match on upper(customer_name), so the
+-- index must be functional to serve them - a bare-column index cannot.
+-- Also shortens advisory-lock hold time on the create path.
+CREATE INDEX IF NOT EXISTS idx_savings_accounts_customer_upper
+    ON savings_accounts (upper(customer_name));

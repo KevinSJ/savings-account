@@ -151,6 +151,30 @@ class AccountControllerWebTest {
     }
 
     @Test
+    void whitespaceOnlyNicknameIs400() throws Exception {
+        // docs/DESIGN-TRADEOFFS.md A4: blank nickname is invalid, not absent.
+        mockMvc.perform(post("/api/v1/accounts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"customerName": "Alice", "nickname": "     "}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.issues[0].field").value("nickname"));
+    }
+
+    @Test
+    void nicknameIsStrippedBeforeSizeValidation() throws Exception {
+        // "  ab  " must not survive as a 6-char nickname storing "ab".
+        mockMvc.perform(post("/api/v1/accounts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"customerName": "Alice", "nickname": "  ab  "}
+                                """))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.issues[0].field").value("nickname"));
+    }
+
+    @Test
     void malformedJsonIs400() throws Exception {
         mockMvc.perform(post("/api/v1/accounts")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -164,6 +188,39 @@ class AccountControllerWebTest {
         mockMvc.perform(get("/api/v1/accounts/not-a-number"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.type").value("https://api.takehome.co.nz/errors/invalid-parameter"));
+    }
+
+    @Test
+    void getByAccountNumberReturns200WithNoStoreCacheControl() throws Exception {
+        when(accountService.getByAccountNumber("325748979052"))
+                .thenReturn(TestAccounts.persisted(1, "325748979052", "Alice Tester", "rainy-day"));
+
+        mockMvc.perform(get("/api/v1/accounts/by-number/325748979052"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store, private"))
+                .andExpect(jsonPath("$.accountNumber").value("325748979052"));
+    }
+
+    @Test
+    void getAddsNoStoreCacheControl() throws Exception {
+        when(accountService.getById(1L))
+                .thenReturn(TestAccounts.persisted(1, "100000000002", "Alice Tester", "rainy-day"));
+
+        mockMvc.perform(get("/api/v1/accounts/1"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store, private"));
+    }
+
+    @Test
+    void malformedAccountNumberIs400() throws Exception {
+        // 11 digits + wrong check digit: rejected before any datastore hit.
+        when(accountService.getByAccountNumber("325748979051"))
+                .thenThrow(new IllegalArgumentException("accountNumber is not a valid number"));
+
+        mockMvc.perform(get("/api/v1/accounts/by-number/325748979051"))
+                .andExpect(status().isBadRequest())
+                .andExpect(jsonPath("$.type")
+                        .value("https://api.takehome.co.nz/errors/invalid-request"));
     }
 
     @Test
@@ -227,6 +284,43 @@ class AccountControllerWebTest {
                                 """))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.type").value("https://api.takehome.co.nz/errors/allocation-unavailable"));
+    }
+
+    @Test
+    void serverGeneratedNumberCollisionIsRetryable503Not409() throws Exception {
+        // Review finding #10: the caller did nothing wrong - the allocator lost a
+        // probe-insert race - so this must not read as a client conflict.
+        org.springframework.dao.DataIntegrityViolationException collision =
+                new org.springframework.dao.DataIntegrityViolationException("could not execute statement",
+                        new java.sql.SQLException(
+                                "ERROR: duplicate key value violates unique constraint "
+                                        + "\"uq_savings_accounts_account_number\" Detail: Key (account_number)=(123456789012) already exists."));
+        when(accountService.create(any(), any())).thenThrow(collision);
+
+        mockMvc.perform(post("/api/v1/accounts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"customerName": "Alice"}
+                                """))
+                .andExpect(status().isServiceUnavailable())
+                .andExpect(jsonPath("$.type")
+                        .value("https://api.takehome.co.nz/errors/allocation-collision"))
+                .andExpect(jsonPath("$.retryable").value(true));
+    }
+
+    @Test
+    void otherIntegrityViolationsStay409() throws Exception {
+        when(accountService.create(any(), any())).thenThrow(
+                new org.springframework.dao.DataIntegrityViolationException(
+                        "not-null violation on some_other_column"));
+
+        mockMvc.perform(post("/api/v1/accounts")
+                        .contentType(MediaType.APPLICATION_JSON)
+                        .content("""
+                                {"customerName": "Alice"}
+                                """))
+                .andExpect(status().isConflict())
+                .andExpect(jsonPath("$.type").value("https://api.takehome.co.nz/errors/conflict"));
     }
 
     @Test

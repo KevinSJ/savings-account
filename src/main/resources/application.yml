@@ -47,7 +47,15 @@ management:
         include: health,info
   endpoint:
     health:
-      show-details: when-authorized
+      # No auth layer in the exercise, so when-authorized == never visible; always
+      # is the honest choice for an operator reading it locally (review finding #8).
+      show-details: always
+      group:
+        # Readiness = "can serve traffic": only the datastore. A dead Redis must not
+        # pull the instance out of rotation because reads degrade to Postgres anyway;
+        # redis stays in the overall health aggregate for dashboards.
+        readiness:
+          include: db
   health:
     redis:
       enabled: true
@@ -67,7 +75,3 @@ spring:
     properties:
       hibernate:
         format_sql: true
-management:
-  endpoint:
-    health:
-      show-details: always

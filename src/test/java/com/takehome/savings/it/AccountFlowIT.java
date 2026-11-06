@@ -54,6 +54,43 @@ class AccountFlowIT extends AbstractIntegrationTest {
     }
 
     @Test
+    @DisplayName("quota counts whitespace variants as the same customer")
+    void quotaSurvivesWhitespaceVariants() {
+        String customer = "Canonical Cathy";
+        for (int i = 1; i <= 5; i++) {
+            ResponseEntity<Map> ok = http.postForEntity("/api/v1/accounts",
+                    Map.of("customerName", customer, "nickname", "slot " + i),
+                    Map.class);
+            assertThat(ok.getStatusCode()).isEqualTo(HttpStatus.CREATED);
+        }
+        // Same customer, sneaky spellings: internal double space and fullwidth
+        // unicode. Canonicalisation must fold both onto the stored identity.
+        for (String variant : new String[] {"Canonical  Cathy",
+                "\uFF23\uFF41\uFF4E\uFF4F\uFF4E\uFF49\uFF43\uFF41\uFF4C \uFF23\uFF41\uFF54\uFF48\uFF59"}) {
+            ResponseEntity<String> response = http.postForEntity("/api/v1/accounts",
+                    Map.of("customerName", variant, "nickname", "sneaky six"),
+                    String.class);
+            assertThat(response.getStatusCode())
+                    .as("variant %s", variant)
+                    .isEqualTo(HttpStatus.CONFLICT);
+        }
+    }
+
+    @Test
+    @DisplayName("fetch by public account number returns the same account")
+    void fetchByAccountNumber() {
+        Map<String, Object> created = http.postForEntity("/api/v1/accounts",
+                Map.of("customerName", "Number Ned", "nickname", "ledger two"), Map.class)
+                .getBody();
+        String accountNumber = (String) created.get("accountNumber");
+
+        ResponseEntity<Map> response = http.getForEntity("/api/v1/accounts/by-number/" + accountNumber, Map.class);
+        assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(response.getBody()).containsEntry("id", created.get("id"));
+        assertThat(response.getHeaders().getCacheControl()).contains("no-store");
+    }
+
+    @Test
     @DisplayName("fetching an unknown id yields a 404 problem document")
     void fetchUnknownId() {
         ResponseEntity<String> response = http.getForEntity("/api/v1/accounts/999999", String.class);

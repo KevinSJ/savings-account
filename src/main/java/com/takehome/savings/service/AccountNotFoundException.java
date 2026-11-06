@@ -10,6 +10,16 @@ public class AccountNotFoundException extends RuntimeException {
         this.accountId = accountId;
     }
 
+    /** Factory for lookups by account number (the id stays unset). */
+    public static AccountNotFoundException forAccountNumber(String accountNumber) {
+        return new AccountNotFoundException(-1) {
+            @Override
+            public String getMessage() {
+                return "Savings account %s does not exist".formatted(accountNumber);
+            }
+        };
+    }
+
     public long getAccountId() {
         return accountId;
     }

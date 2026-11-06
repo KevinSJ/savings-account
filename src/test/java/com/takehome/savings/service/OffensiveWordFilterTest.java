@@ -20,14 +20,36 @@ class OffensiveWordFilterTest {
     }
 
     @Test
-    @DisplayName("separator-obfuscated words are caught via the skeleton pass")
+    @DisplayName("letter-separated obfuscation is caught via the skeleton pass")
     void obfuscatedMatch() {
         assertThat(filter.firstOffensiveMatch("s-t-u-p-i-d")).isPresent();
         assertThat(filter.firstOffensiveMatch("stup!d")).isPresent();
-        assertThat(filter.firstOffensiveMatch("blo0dy h311")).isPresent();
+        assertThat(filter.firstOffensiveMatch("bl00dy")).isPresent(); // o->0
+        assertThat(filter.firstOffensiveMatch("blo0dy")).isPresent();
         // 4-letter banned terms ("dumb") only match as whole tokens: the substring pass
         // needs >= 5 letters, otherwise "hello" trips "hell" and "dumbbell" trips "dumb".
         assertThat(filter.firstOffensiveMatch("dumbbell workout log")).isEmpty();
+    }
+
+    @Test
+    @DisplayName("symbol-substitution vectors caught standing alone (review finding #6)")
+    void leetPatternPassStandsAlone() {
+        // Each of these failed before the leet-pattern pass existed: the old
+        // "blo0dy h311" test masked the gap by matching blo0dy only.
+        assertThat(filter.firstOffensiveMatch("h311")).isPresent();   // hell, 1<->l
+        assertThat(filter.firstOffensiveMatch("he11")).isPresent();   // hell
+        assertThat(filter.firstOffensiveMatch("st0pid")).isPresent(); // stupid, 0<->u
+        assertThat(filter.firstOffensiveMatch("d4mn")).isPresent();   // damn
+        assertThat(filter.firstOffensiveMatch("my h311 jar")).isPresent();
+    }
+
+    @Test
+    @DisplayName("digit-free text stays immune to the relaxed leet threshold")
+    void leetPassStaysDisarmedWithoutDigits() {
+        // 'hell' inside natural words must still be safe when no digits/symbols present.
+        assertThat(filter.firstOffensiveMatch("hello there")).isEmpty();
+        assertThat(filter.firstOffensiveMatch("shell holiday fund")).isEmpty();
+        assertThat(filter.firstOffensiveMatch("stupidity allowance")).isPresent(); // token: stupidity
     }
 
     @Test

@@ -17,6 +17,9 @@ public interface SavingsAccountRepository extends JpaRepository<SavingsAccount, 
     /** Collision probe backing the random account-number generator. */
     boolean existsByAccountNumber(String accountNumber);
 
+    /** Lookup by the public-facing number (read path; served through the same cache). */
+    java.util.Optional<SavingsAccount> findByAccountNumber(String accountNumber);
+
     /**
      * Serialises account creation per customer across all application instances.
      *
@@ -25,14 +28,23 @@ public interface SavingsAccountRepository extends JpaRepository<SavingsAccount, 
      * A transaction-scoped Postgres advisory lock (keyed on the customer name) closes that
      * race while remaining deadlock-free (single lock, always acquired before any read).
      *
-     * <p>The key folds the name through {@code lower()} to match the case-insensitive
-     * count semantics above - otherwise "Alice" and "ALICE" would take different locks
+     * <p>The key folds the name through {@code upper()} - the same fold the
+     * case-insensitive count uses - so "Alice" and "ALICE" take the same lock
      * while racing against the same quota.
      *
      * <p>Alternatives considered (serialisable isolation + retry, customer-side rows to
      * pessimistically lock, DB triggers) are compared in docs/DESIGN-TRADEOFFS.md.
      */
-    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(lower(:customerName), 0))",
+    /**
+     * Bounds the wait for the advisory lock to the current transaction. Without it
+     * {@code pg_advisory_xact_lock} waits forever, so "contention" could never be
+     * observed or answered with a 503 - just silent pile-up (review finding #4).
+     * {@code set_config(..., is_local := true)} resets at commit/rollback.
+     */
+    @Query(value = "SELECT set_config('lock_timeout', '2000', true)", nativeQuery = true)
+    void boundAdvisoryLockWait();
+
+    @Query(value = "SELECT pg_advisory_xact_lock(hashtextextended(upper(:customerName), 0))",
             nativeQuery = true)
     void acquireCustomerAccountLock(@Param("customerName") String customerName);
 }
