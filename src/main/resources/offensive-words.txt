@@ -1,0 +1,17 @@
+# Nickname blocklist: one term per line, '#'-prefixed lines are comments.
+# Deliberately a short, tame sample for the exercise - enough to demonstrate the
+# matching machinery (tokens, glued/leet skeletons) without shipping a vulgar corpus.
+#
+# TODO(moderation): production would source this from a curated/moderation service;
+# see OffensiveWordFilter javadoc.
+damn
+hell
+bloody
+stupid
+idiot
+moron
+loser
+crap
+dumb
+sucker
+jerk

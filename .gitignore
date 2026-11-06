@@ -1,0 +1,34 @@
+# Build output
+build/
+out/
+bin/
+
+# Gradle
+.gradle/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Local toolchain (JDK/Gradle provisioned by bootstrap script, not part of the project)
+.toolchain/
+temp/
+
+# IDEs
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.settings/
+.classpath
+.project
+
+# OS noise
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# Local secrets (compose overrides etc.)
+*.local.yml
+.env
