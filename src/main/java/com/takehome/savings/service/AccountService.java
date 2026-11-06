@@ -2,6 +2,7 @@ package com.takehome.savings.service;
 
 import java.text.Normalizer;
 import java.time.Duration;
+import java.util.UUID;
 
 import com.takehome.savings.config.CacheConfig;
 import com.takehome.savings.domain.SavingsAccount;
@@ -64,25 +65,26 @@ public class AccountService {
     }
 
     /**
-     * Fetch one account by surrogate id.
+     * Fetch one account by its opaque external UID (UUID).
      *
      * <p>Cached in Redis ({@link com.takehome.savings.config.CacheConfig}): misses hit
      * Postgres, hits are served from Redis; a Redis outage degrades to Postgres reads
-     * via the configured {@code CacheErrorHandler}. Not-found ids are never cached -
+     * via the configured {@code CacheErrorHandler}. Not-found lookups are never cached -
      * they stay cheap rejects.
      */
     @Cacheable(cacheNames = CacheConfig.ACCOUNTS_CACHE)
     @Transactional(readOnly = true)
-    public SavingsAccount getById(long id) {
-        return repository.findById(id)
-                .orElseThrow(() -> new AccountNotFoundException(id));
+    public SavingsAccount getByUid(UUID accountId) {
+        return repository.findByAccountUid(accountId)
+                .orElseThrow(() -> new AccountNotFoundException(accountId.toString()));
     }
 
     /**
      * Fetch one account by its public account number.
      *
-     * <p>Review finding #1: gives integrators a random-looking public lookup key so
-     * callers do not have to lean on the sequential surrogate id in URLs.
+     * <p>An alternative public lookup key (12 digits + Luhn check digit). The
+     * random UID is the default identifier in URLs; this endpoint exists because
+     * account numbers are what customers can quote over a phone call.
      * Malformed numbers are rejected before touching the datastore.
      */
     @Cacheable(cacheNames = CacheConfig.ACCOUNTS_CACHE, key = "'number:' + #accountNumber")
@@ -93,7 +95,7 @@ public class AccountService {
             throw new IllegalArgumentException("accountNumber is not a valid number");
         }
         return repository.findByAccountNumber(accountNumber)
-                .orElseThrow(() -> AccountNotFoundException.forAccountNumber(accountNumber));
+                .orElseThrow(() -> new AccountNotFoundException(accountNumber));
     }
 
     private String canonicalizeName(String customerName) {

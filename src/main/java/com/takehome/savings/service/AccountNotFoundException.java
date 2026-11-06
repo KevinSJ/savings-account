@@ -1,26 +1,20 @@
 package com.takehome.savings.service;
 
-/** No savings account exists for the requested id. Mapped to HTTP 404. */
+/**
+ * No savings account matches the requested identifier. Mapped to HTTP 404.
+ * The identifier may be an external account UID (UUID) or an account number;
+ * both are opaque strings for message purposes.
+ */
 public class AccountNotFoundException extends RuntimeException {
 
-    private final long accountId;
+    private final String identifier;
 
-    public AccountNotFoundException(long accountId) {
-        super("Savings account %d does not exist".formatted(accountId));
-        this.accountId = accountId;
+    public AccountNotFoundException(String identifier) {
+        super("Savings account %s does not exist".formatted(identifier));
+        this.identifier = identifier;
     }
 
-    /** Factory for lookups by account number (the id stays unset). */
-    public static AccountNotFoundException forAccountNumber(String accountNumber) {
-        return new AccountNotFoundException(-1) {
-            @Override
-            public String getMessage() {
-                return "Savings account %s does not exist".formatted(accountNumber);
-            }
-        };
-    }
-
-    public long getAccountId() {
-        return accountId;
+    public String getIdentifier() {
+        return identifier;
     }
 }

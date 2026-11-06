@@ -75,7 +75,8 @@ POST /api/v1/accounts
        c. generator yields 11 random digits + Luhn check digit
           (probe existsByAccountNumber, max 5 retries) -> AccountNumberAllocationException (503)
        d. INSERT; DB unique constraint on account_number is the final backstop
-  3. 201 Created + Location: /api/v1/accounts/{id} + body
+  3. 201 Created + Location: /api/v1/accounts/{id=uuid}; body is minimal by
+     requirement (account number only - the id never appears in create bodies)
 ```
 
 Steps 2a+2b are what make the quota race-free across app instances. A read-modify-write
@@ -105,7 +106,7 @@ All failures map to RFC 9457 `application/problem+json` with stable `type` URIs
 | well-formed but semantically wrong (e.g. bad account-number format) | 400 | `invalid-request` |
 | unreadable/malformed JSON | 400 | `malformed-body` |
 | non-numeric path id | 400 | `invalid-parameter` |
-| unknown id | 404 | `account-not-found` |
+| unknown accountId | 404 | `account-not-found` |
 | unknown route / method | 404 / 405 | `route-not-found` / `method-not-allowed` |
 | quota exceeded | 409 | `account-limit-reached` |
 | unique-violation (rare backstop) | 409 | `conflict` |
@@ -122,11 +123,16 @@ condition, not a crash: the app still boots, actuator health goes `DOWN` on the
 
 ## Data model
 
-Single table `savings_accounts` (see `src/main/resources/db/schema.sql`):
+Single table `savings_accounts` (see `src/main/resources/db/schema.sql`).
+Identity is two-layered: an internal `id` that never leaves the system, and an
+opaque `account_uid` (UUIDv4) that is the *only* identifier clients see in URLs,
+responses, caches and error messages - the enumeration surface Kevin called out
+is structurally closed (see docs/DESIGN-TRADEOFFS.md D10):
 
 | column | notes |
 |---|---|
-| `id` | identity PK, server-generated |
+| `id` | identity PK, server-generated, internal-only (never on the wire) |
+| `account_uid` | UUIDv4, unique, app-generated; THE external identifier |
 | `account_number` | unique, 12 digits ending in a Luhn check digit |
 | `customer_name` | mandatory; canonicalised (NFKC + whitespace collapse); served by a functional index on upper(customer_name) |
 | `nickname` | nullable; blank normalised to NULL |

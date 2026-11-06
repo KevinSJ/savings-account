@@ -37,20 +37,25 @@ class AccountFlowIT extends AbstractIntegrationTest {
 
         assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         assertThat(created.getHeaders().getLocation()).isNotNull();
-        assertThat(created.getBody()).containsEntry("customerName", "Flow Frieda");
-        Number id = (Number) created.getBody().get("id");
+        // Requirement: create body is minimal (account number only); the opaque id
+        // travels once, in the Location header.
+        assertThat(created.getBody()).containsEntry("accountNumber", created.getBody().get("accountNumber"));
+        assertThat(created.getBody()).doesNotContainKey("id");
+        String locationPath = created.getHeaders().getLocation().getPath();
+        assertThat(locationPath).startsWith("/api/v1/accounts/");
+        assertThat(locationPath.substring("/api/v1/accounts/".length())).matches("[0-9a-f-]{36}");
 
         // First GET: cache miss, Postgres read, cache write.
-        ResponseEntity<Map> first = http.getForEntity("/api/v1/accounts/" + id, Map.class);
+        ResponseEntity<Map> first = http.getForEntity(locationPath, Map.class);
         assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
+        assertThat(first.getBody()).containsEntry("id", locationPath.substring("/api/v1/accounts/".length()));
         assertThat(first.getBody()).containsEntry("accountNumber", created.getBody().get("accountNumber"));
         assertThat(first.getBody()).containsEntry("nickname", "nest egg");
-
         // The cache key materialises synchronously within request handling.
         assertThat(redis.keys("savings:accounts:*")).isNotEmpty();
 
         // Second GET: served from Redis (same payload).
-        ResponseEntity<Map> second = http.getForEntity("/api/v1/accounts/" + id, Map.class);
+        ResponseEntity<Map> second = http.getForEntity(locationPath, Map.class);
         assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(second.getBody()).isEqualTo(first.getBody());
     }
@@ -81,21 +86,23 @@ class AccountFlowIT extends AbstractIntegrationTest {
     @Test
     @DisplayName("fetch by public account number returns the same account")
     void fetchByAccountNumber() {
-        Map<String, Object> created = http.postForEntity("/api/v1/accounts",
-                Map.of("customerName", "Number Ned", "nickname", "ledger two"), Map.class)
-                .getBody();
-        String accountNumber = (String) created.get("accountNumber");
+        ResponseEntity<Map> created = http.postForEntity("/api/v1/accounts",
+                Map.of("customerName", "Number Ned", "nickname", "ledger two"), Map.class);
+        String accountNumber = (String) created.getBody().get("accountNumber");
 
         ResponseEntity<Map> response = http.getForEntity("/api/v1/accounts/by-number/" + accountNumber, Map.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
-        assertThat(response.getBody()).containsEntry("id", created.get("id"));
+        // the wire model exposes the opaque uuid as 'id'
+        assertThat(response.getBody()).containsKey("id");
+        assertThat(response.getBody()).containsEntry("accountNumber", accountNumber);
         assertThat(response.getHeaders().getCacheControl()).contains("no-store");
     }
 
     @Test
-    @DisplayName("fetching an unknown id yields a 404 problem document")
-    void fetchUnknownId() {
-        ResponseEntity<String> response = http.getForEntity("/api/v1/accounts/999999", String.class);
+    @DisplayName("fetching an unknown uid yields a 404 problem document")
+    void fetchUnknownUid() {
+        String unknown = "00000000-0000-4a2b-9c3d-5e6f70899a0b";
+        ResponseEntity<String> response = http.getForEntity("/api/v1/accounts/" + unknown, String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody()).contains("account-not-found");

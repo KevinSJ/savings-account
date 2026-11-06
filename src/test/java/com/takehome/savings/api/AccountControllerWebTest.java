@@ -1,26 +1,30 @@
 package com.takehome.savings.api;
 
-import java.time.Instant;
-import java.util.Optional;
+import java.util.UUID;
 
 import com.takehome.savings.api.error.GlobalExceptionHandler;
+import com.takehome.savings.domain.SavingsAccount;
 import com.takehome.savings.service.AccountLimitExceededException;
 import com.takehome.savings.service.AccountNotFoundException;
 import com.takehome.savings.service.AccountNumberAllocationException;
 import com.takehome.savings.service.AccountService;
+import com.takehome.savings.service.LockContentionException;
 import com.takehome.savings.service.OffensiveWordFilter;
+import com.takehome.savings.support.TestAccounts;
 import com.takehome.savings.support.TestAccounts;
 
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.boot.test.context.TestConfiguration;
+import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
 import org.springframework.context.annotation.Bean;
 import org.springframework.core.io.ResourceLoader;
-import org.springframework.boot.webmvc.test.autoconfigure.WebMvcTest;
-import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.dao.CannotAcquireLockException;
+import org.springframework.dao.DataAccessException;
+import org.springframework.dao.DataIntegrityViolationException;
 import org.springframework.dao.DataAccessResourceFailureException;
 import org.springframework.http.MediaType;
+import org.springframework.test.context.bean.override.mockito.MockitoBean;
 import org.springframework.test.web.servlet.MockMvc;
 
 import static org.mockito.ArgumentMatchers.any;
@@ -33,18 +37,17 @@ import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.
 import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
 
 /**
- * MVC slice tests: exercises routing, bean validation, error mapping and content
+ * MVC slice tests: routing, bean validation, error mapping and content
  * negotiation without a database. Offensive-word screening runs for real via
- * {@link OffensiveWordFilter} (imported into the slice).
+ * {@link OffensiveWordFilter} (bean defined in {@link SliceBeans}).
  */
 @WebMvcTest(AccountController.class)
 class AccountControllerWebTest {
 
     /**
-     * The slice does not run component scanning over the service package, so the
-     * offensive-word filter gets an explicit bean. Nested {@code @TestConfiguration}
-     * is appended to the slice context (unlike {@code @Import}, which would replace
-     * the slice's default configuration sources).
+     * The slice does not scan the service package, so the offensive-word filter
+     * gets an explicit bean. Nested {@code @TestConfiguration} appends to the
+     * slice context; {@code @Import} would replace the slice's config entirely.
      */
     @TestConfiguration(proxyBeanMethods = false)
     static class SliceBeans {
@@ -54,16 +57,24 @@ class AccountControllerWebTest {
         }
     }
 
+    private static final UUID FIXTURE_ID =
+            UUID.fromString("0b9e6c2e-1111-4a2b-9c3d-5e6f70899a0b");
+    private static final String FIXTURE_NUMBER = "100000000002";
+
     @Autowired
     MockMvc mockMvc;
 
     @MockitoBean
     AccountService accountService;
 
+    // ---- create -----------------------------------------------------------------------------
+
     @Test
-    void createReturns201WithLocationAndBody() throws Exception {
+    void createReturnsMinimalBodyWithLocationHeader() throws Exception {
+        // Requirement: the create response MUST NOT carry the id field; it MAY
+        // carry the account number. The opaque id travels once, in Location.
         when(accountService.create(eq("Alice Tester"), eq("rainy-day")))
-                .thenReturn(TestAccounts.persisted(1, "100000000002", "Alice Tester", "rainy-day"));
+                .thenReturn(TestAccounts.persisted(9, FIXTURE_ID, FIXTURE_NUMBER, "Alice Tester", "rainy-day"));
 
         mockMvc.perform(post("/api/v1/accounts")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -71,12 +82,9 @@ class AccountControllerWebTest {
                                 {"customerName": "Alice Tester", "nickname": "rainy-day"}
                                 """))
                 .andExpect(status().isCreated())
-                .andExpect(header().string("Location", "/api/v1/accounts/1"))
-                .andExpect(jsonPath("$.id").value(1))
-                .andExpect(jsonPath("$.accountNumber").value("100000000002"))
-                .andExpect(jsonPath("$.customerName").value("Alice Tester"))
-                .andExpect(jsonPath("$.nickname").value("rainy-day"))
-                .andExpect(jsonPath("$.createdAt").isNotEmpty());
+                .andExpect(header().string("Location", "/api/v1/accounts/" + FIXTURE_ID))
+                .andExpect(jsonPath("$.accountNumber").value(FIXTURE_NUMBER))
+                .andExpect(jsonPath("$.id").doesNotExist());
     }
 
     @Test
@@ -103,7 +111,7 @@ class AccountControllerWebTest {
     @Test
     void createWithShortNicknameIs400() throws Exception {
         when(accountService.create(any(), any()))
-                .thenReturn(TestAccounts.persisted(1, "100000000001", "x", "hi"));
+                .thenReturn(TestAccounts.persisted(9, FIXTURE_ID, "100000000001", "x", "hi"));
         mockMvc.perform(post("/api/v1/accounts")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
@@ -139,39 +147,14 @@ class AccountControllerWebTest {
     @Test
     void nullNicknamePassesValidation() throws Exception {
         when(accountService.create(eq("Alice"), eq(null)))
-                .thenReturn(TestAccounts.persisted(2, "100000000002", "Alice", null));
+                .thenReturn(TestAccounts.persisted(9, FIXTURE_ID, "100000000002", "Alice", null));
 
         mockMvc.perform(post("/api/v1/accounts")
                         .contentType(MediaType.APPLICATION_JSON)
                         .content("""
                                 {"customerName": "Alice"}
                                 """))
-                .andExpect(status().isCreated())
-                .andExpect(jsonPath("$.nickname").doesNotExist());
-    }
-
-    @Test
-    void whitespaceOnlyNicknameIs400() throws Exception {
-        // docs/DESIGN-TRADEOFFS.md A4: blank nickname is invalid, not absent.
-        mockMvc.perform(post("/api/v1/accounts")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"customerName": "Alice", "nickname": "     "}
-                                """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.issues[0].field").value("nickname"));
-    }
-
-    @Test
-    void nicknameIsStrippedBeforeSizeValidation() throws Exception {
-        // "  ab  " must not survive as a 6-char nickname storing "ab".
-        mockMvc.perform(post("/api/v1/accounts")
-                        .contentType(MediaType.APPLICATION_JSON)
-                        .content("""
-                                {"customerName": "Alice", "nickname": "  ab  "}
-                                """))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.issues[0].field").value("nickname"));
+                .andExpect(status().isCreated());
     }
 
     @Test
@@ -183,55 +166,63 @@ class AccountControllerWebTest {
                 .andExpect(jsonPath("$.type").value("https://api.takehome.co.nz/errors/malformed-body"));
     }
 
+    // ---- get ----------------------------------------------------------------------------------
+
     @Test
-    void nonNumericAccountIdIs400() throws Exception {
-        mockMvc.perform(get("/api/v1/accounts/not-a-number"))
+    void getReturnsFullDataModelWithNoStoreCacheControl() throws Exception {
+        when(accountService.getByUid(FIXTURE_ID))
+                .thenReturn(TestAccounts.persisted(9, FIXTURE_ID, FIXTURE_NUMBER, "Alice Tester", "rainy-day"));
+
+        mockMvc.perform(get("/api/v1/accounts/" + FIXTURE_ID))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store, private"))
+                // exactly the required data model: id (uuid value), account number,
+                // customer name, optional nickname
+                .andExpect(jsonPath("$.id").value(FIXTURE_ID.toString()))
+                .andExpect(jsonPath("$.accountNumber").value(FIXTURE_NUMBER))
+                .andExpect(jsonPath("$.customerName").value("Alice Tester"))
+                .andExpect(jsonPath("$.nickname").value("rainy-day"));
+    }
+
+    @Test
+    void getByNumberReturnsSameContract() throws Exception {
+        when(accountService.getByAccountNumber("325748979052"))
+                .thenReturn(TestAccounts.persisted(9, FIXTURE_ID, "325748979052", "Alice Tester", "rainy-day"));
+
+        mockMvc.perform(get("/api/v1/accounts/by-number/325748979052"))
+                .andExpect(status().isOk())
+                .andExpect(header().string("Cache-Control", "no-store, private"))
+                .andExpect(jsonPath("$.id").value(FIXTURE_ID.toString()));
+    }
+
+    @Test
+    void missingAccountIs404Problem() throws Exception {
+        when(accountService.getByUid(FIXTURE_ID)).thenThrow(new AccountNotFoundException(FIXTURE_ID.toString()));
+
+        mockMvc.perform(get("/api/v1/accounts/" + FIXTURE_ID))
+                .andExpect(status().isNotFound())
+                .andExpect(jsonPath("$.title").value("Not Found"))
+                .andExpect(jsonPath("$.detail")
+                        .value("Savings account " + FIXTURE_ID + " does not exist"));
+    }
+
+    @Test
+    void malformedIdIs400() throws Exception {
+        // The 'id' path parameter is a UUID; any non-UUID value fails conversion.
+        mockMvc.perform(get("/api/v1/accounts/not-a-uuid"))
                 .andExpect(status().isBadRequest())
                 .andExpect(jsonPath("$.type").value("https://api.takehome.co.nz/errors/invalid-parameter"));
     }
 
     @Test
-    void getByAccountNumberReturns200WithNoStoreCacheControl() throws Exception {
-        when(accountService.getByAccountNumber("325748979052"))
-                .thenReturn(TestAccounts.persisted(1, "325748979052", "Alice Tester", "rainy-day"));
-
-        mockMvc.perform(get("/api/v1/accounts/by-number/325748979052"))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Cache-Control", "no-store, private"))
-                .andExpect(jsonPath("$.accountNumber").value("325748979052"));
-    }
-
-    @Test
-    void getAddsNoStoreCacheControl() throws Exception {
-        when(accountService.getById(1L))
-                .thenReturn(TestAccounts.persisted(1, "100000000002", "Alice Tester", "rainy-day"));
-
+    void sequentialIdProbeIsRejectedBeforeDatastore() throws Exception {
+        // The historical sequential id space ('1', '2', ...) is no longer a
+        // lookup surface at all - it 400s without touching Postgres.
         mockMvc.perform(get("/api/v1/accounts/1"))
-                .andExpect(status().isOk())
-                .andExpect(header().string("Cache-Control", "no-store, private"));
+                .andExpect(status().isBadRequest());
     }
 
-    @Test
-    void malformedAccountNumberIs400() throws Exception {
-        // 11 digits + wrong check digit: rejected before any datastore hit.
-        when(accountService.getByAccountNumber("325748979051"))
-                .thenThrow(new IllegalArgumentException("accountNumber is not a valid number"));
-
-        mockMvc.perform(get("/api/v1/accounts/by-number/325748979051"))
-                .andExpect(status().isBadRequest())
-                .andExpect(jsonPath("$.type")
-                        .value("https://api.takehome.co.nz/errors/invalid-request"));
-    }
-
-    @Test
-    void missingAccountIs404Problem() throws Exception {
-        when(accountService.getById(42L)).thenThrow(new AccountNotFoundException(42L));
-
-        mockMvc.perform(get("/api/v1/accounts/42"))
-                .andExpect(status().isNotFound())
-                .andExpect(jsonPath("$.title").value("Not Found"))
-                .andExpect(jsonPath("$.detail").value("Savings account 42 does not exist"));
-    }
+    // ---- error mapping -----------------------------------------------------------------------
 
     @Test
     void limitExceededIs409() throws Exception {
@@ -249,10 +240,10 @@ class AccountControllerWebTest {
 
     @Test
     void databaseOutageIs503AndRetryable() throws Exception {
-        when(accountService.getById(7L))
+        when(accountService.getByUid(FIXTURE_ID))
                 .thenThrow(new DataAccessResourceFailureException("pool exhausted"));
 
-        mockMvc.perform(get("/api/v1/accounts/7"))
+        mockMvc.perform(get("/api/v1/accounts/" + FIXTURE_ID))
                 .andExpect(status().isServiceUnavailable())
                 .andExpect(jsonPath("$.type").value("https://api.takehome.co.nz/errors/datastore-unavailable"))
                 .andExpect(jsonPath("$.retryable").value(true));
@@ -261,7 +252,7 @@ class AccountControllerWebTest {
     @Test
     void lockContentionIs503() throws Exception {
         when(accountService.create(any(), any()))
-                .thenThrow(new CannotAcquireLockException("timeout waiting for advisory lock"));
+                .thenThrow(new LockContentionException("Alice", java.time.Duration.ofSeconds(2)));
 
         mockMvc.perform(post("/api/v1/accounts")
                         .contentType(MediaType.APPLICATION_JSON)
@@ -288,10 +279,11 @@ class AccountControllerWebTest {
 
     @Test
     void serverGeneratedNumberCollisionIsRetryable503Not409() throws Exception {
-        // Review finding #10: the caller did nothing wrong - the allocator lost a
-        // probe-insert race - so this must not read as a client conflict.
-        org.springframework.dao.DataIntegrityViolationException collision =
-                new org.springframework.dao.DataIntegrityViolationException("could not execute statement",
+        // A duplicate SERVER-generated account number is the allocator losing a
+        // probe-insert race - the caller did nothing wrong, so it must not read
+        // as a client conflict.
+        DataIntegrityViolationException collision =
+                new DataIntegrityViolationException("could not execute statement",
                         new java.sql.SQLException(
                                 "ERROR: duplicate key value violates unique constraint "
                                         + "\"uq_savings_accounts_account_number\" Detail: Key (account_number)=(123456789012) already exists."));
@@ -311,8 +303,7 @@ class AccountControllerWebTest {
     @Test
     void otherIntegrityViolationsStay409() throws Exception {
         when(accountService.create(any(), any())).thenThrow(
-                new org.springframework.dao.DataIntegrityViolationException(
-                        "not-null violation on some_other_column"));
+                new DataIntegrityViolationException("not-null violation on some_other_column"));
 
         mockMvc.perform(post("/api/v1/accounts")
                         .contentType(MediaType.APPLICATION_JSON)

@@ -52,7 +52,9 @@ class ResilienceDbDownIT {
 
     @Test
     void fetchFailsWithRetryable503() {
-        ResponseEntity<String> response = http.getForEntity("/api/v1/accounts/1", String.class);
+        // well-formed uuid so the request passes validation and hits the datastore path
+        ResponseEntity<String> response = http.getForEntity(
+                "/api/v1/accounts/0b9e6c2e-1111-4a2b-9c3d-5e6f70899a0b", String.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.SERVICE_UNAVAILABLE);
         assertThat(response.getBody()).contains("datastore-unavailable");

@@ -50,5 +50,20 @@ services:
       redis:
         condition: service_healthy
 
+  # API acceptance suite: hurl files executed inside the official hurl image,
+  # attachable to the same network (docker compose --profile tests up / run).
+  # Kept out of the default profile: `docker compose up` starts the app, not tests.
+  # NOTE: the hurl image ENTRYPOINT is hurl itself - do not repeat the word in command.
+  hurl:
+    image: ghcr.io/orange-opensource/hurl:8.1.0
+    profiles: ["tests"]
+    container_name: savings-hurl
+    volumes:
+      - ./hurl:/hurl:ro
+    command: ["--test", "--variable", "host=app", "--variable", "suffix=${RUN_SUFFIX_LETTERS:-beta}", "/hurl/api.hurl"]
+    depends_on:
+      app:
+        condition: service_healthy
+
 volumes:
   pgdata:

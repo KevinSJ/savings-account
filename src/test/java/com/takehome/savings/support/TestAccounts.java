@@ -1,6 +1,7 @@
 package com.takehome.savings.support;
 
 import java.time.Instant;
+import java.util.UUID;
 
 import com.takehome.savings.domain.SavingsAccount;
 
@@ -18,15 +19,16 @@ public final class TestAccounts {
     private TestAccounts() {
     }
 
-    public static SavingsAccount persisted(long id, String accountNumber, String customerName,
-                                           String nickname) {
-        return persisted(id, accountNumber, customerName, nickname, DEFAULT_CREATED_AT);
+    public static SavingsAccount persisted(long internalId, UUID accountId, String accountNumber,
+                                           String customerName, String nickname) {
+        return persisted(internalId, accountId, accountNumber, customerName, nickname, DEFAULT_CREATED_AT);
     }
 
-    public static SavingsAccount persisted(long id, String accountNumber, String customerName,
-                                           String nickname, Instant createdAt) {
+    public static SavingsAccount persisted(long internalId, UUID accountId, String accountNumber,
+                                           String customerName, String nickname, Instant createdAt) {
         SavingsAccount account = SavingsAccount.openNew(accountNumber, customerName, nickname);
-        ReflectionTestUtils.setField(account, "id", id);
+        ReflectionTestUtils.setField(account, "id", internalId);
+        ReflectionTestUtils.setField(account, "accountUid", accountId);
         ReflectionTestUtils.setField(account, "createdAt", createdAt);
         return account;
     }

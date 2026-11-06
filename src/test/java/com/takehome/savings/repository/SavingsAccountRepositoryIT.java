@@ -29,6 +29,7 @@ class SavingsAccountRepositoryIT extends AbstractIntegrationTest {
                 SavingsAccount.openNew("123456789012", "Alice Tester", "rainy-day"));
 
         assertThat(saved.getId()).isNotNull();
+        assertThat(saved.getAccountUid()).isNotNull();
         assertThat(saved.getCreatedAt()).isNotNull();
         assertThat(saved.getUpdatedAt()).isNotNull();
         assertThat(saved.getNickname()).isEqualTo("rainy-day");

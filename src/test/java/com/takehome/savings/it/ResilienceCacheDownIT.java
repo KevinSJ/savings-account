@@ -59,16 +59,17 @@ class ResilienceCacheDownIT {
                 Map.class);
 
         assertThat(created.getStatusCode()).isEqualTo(HttpStatus.CREATED);
-        Number id = (Number) created.getBody().get("id");
+        // the id is only in the Location header now
+        String locationPath = created.getHeaders().getLocation().getPath();
 
         // First GET: cache lookup fails (swallowed), cache put fails (swallowed),
         // Postgres answers.
-        ResponseEntity<Map> first = http.getForEntity("/api/v1/accounts/" + id, Map.class);
+        ResponseEntity<Map> first = http.getForEntity(locationPath, Map.class);
         assertThat(first.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(first.getBody()).containsEntry("customerName", "Cache Out Chloe");
 
         // Second GET: still fine - degradation is stable, not one-shot luck.
-        ResponseEntity<Map> second = http.getForEntity("/api/v1/accounts/" + id, Map.class);
+        ResponseEntity<Map> second = http.getForEntity(locationPath, Map.class);
         assertThat(second.getStatusCode()).isEqualTo(HttpStatus.OK);
         assertThat(second.getBody()).isEqualTo(first.getBody());
     }

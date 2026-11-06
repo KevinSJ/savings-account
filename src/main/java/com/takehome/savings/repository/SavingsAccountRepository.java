@@ -20,6 +20,9 @@ public interface SavingsAccountRepository extends JpaRepository<SavingsAccount, 
     /** Lookup by the public-facing number (read path; served through the same cache). */
     java.util.Optional<SavingsAccount> findByAccountNumber(String accountNumber);
 
+    /** Lookup by the opaque external UID - the identifier clients use in URLs. */
+    java.util.Optional<SavingsAccount> findByAccountUid(java.util.UUID accountUid);
+
     /**
      * Serialises account creation per customer across all application instances.
      *

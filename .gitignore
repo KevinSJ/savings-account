@@ -32,3 +32,7 @@ logs/
 # Local secrets (compose overrides etc.)
 *.local.yml
 .env
+
+# The hurl acceptance suite is source code. A global *.hurl ignore rule exists
+# on some machines (user-level gitignore) - re-include the suite explicitly.
+!hurl/*.hurl

@@ -176,15 +176,19 @@ class AccountServiceTest {
                 .hasMessage("Savings account 629054787375 does not exist");
     }
 
-    @Test
-    @DisplayName("getById: found and missing branches")
-    void getById() {
-        SavingsAccount entity = SavingsAccount.openNew("123456789012", "Alice", null);
-        when(repository.findById(7L)).thenReturn(Optional.of(entity));
-        when(repository.findById(8L)).thenReturn(Optional.empty());
+    private static final java.util.UUID UID = java.util.UUID.fromString("0b9e6c2e-1111-4a2b-9c3d-5e6f70899a0b");
 
-        assertThat(service.getById(7L)).isSameAs(entity);
-        assertThatThrownBy(() -> service.getById(8L))
-                .isInstanceOf(AccountNotFoundException.class);
+    @Test
+    @DisplayName("getByUid: found and missing branches")
+    void getByUid() {
+        SavingsAccount entity = SavingsAccount.openNew("123456789012", "Alice", null);
+        when(repository.findByAccountUid(UID)).thenReturn(Optional.of(entity));
+        java.util.UUID unknown = java.util.UUID.fromString("0b9e6c2e-1111-4a2b-9c3d-000000000000");
+        when(repository.findByAccountUid(unknown)).thenReturn(Optional.empty());
+
+        assertThat(service.getByUid(UID)).isSameAs(entity);
+        assertThatThrownBy(() -> service.getByUid(unknown))
+                .isInstanceOf(AccountNotFoundException.class)
+                .hasMessage("Savings account %s does not exist".formatted(unknown));
     }
 }
