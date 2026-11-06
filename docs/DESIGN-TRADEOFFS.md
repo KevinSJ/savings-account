@@ -151,6 +151,26 @@ dead port authoritative. `@TestConfiguration` (nested) adds slice beans; `@Impor
 of a configuration class would have *replaced* the slice's scanned controllers -
 an encoding of a real Spring pitfall.
 
+### D9 - Boot 4 modularisation and the version catalog
+
+The stack was deliberately moved to Spring Boot 4.1.2 + Gradle 9.8 (project
+requirement) with every version centralised in `gradle/libs.versions.toml`.
+Fallbacks considered and rejected: staying on Boot 3.5 (explicit requirement),
+continuing with `io.spring.dependency-management` (superseded by `platform()`
+BOM application). Costs absorbed and worth knowing:
+- test slices split into per-tech artifacts (`spring-boot-webmvc-test` etc.);
+- `TestRestTemplate` survives but its bean needs an explicit
+  `@AutoConfigureTestRestTemplate` plus the `spring-boot-restclient` module
+  (`RestTemplateBuilder` left the core jar);
+- Jackson 3 (`tools.jackson`) replaces Jackson 2 - the Redis serialiser moved
+  to the Jackson3 `JacksonJsonRedisSerializer` over Boot's own `ObjectMapper`.
+Choice made for the API contract: a hand-written OpenAPI 3.1 document instead
+of springdoc generation. Rationale: zero runtime coupling, spec stays honest
+about exactly the implemented surface (including status codes and the
+problems taxonomy), and examples were captured from live traffic. Trade-off:
+the spec can drift from code; the hurl suite is the executable check that
+aligns them.
+
 ### D8 - Version column with no mutation endpoint
 
 `version` + `@Version` cost one column now; retrofitting optimistic locking onto a

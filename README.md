@@ -1,10 +1,12 @@
 # Savings Account API — take-home exercise
 
-A Spring Boot REST API that creates and reads savings bank accounts.
+Spring Boot REST API that creates and reads savings bank accounts.
 
-- Java 21, Spring Boot 3.5.x, Gradle (Kotlin DSL, wrapper committed)
+- Java 21, Spring Boot 4.1.2, Gradle 9.8 (Kotlin DSL + version catalog)
 - PostgreSQL (single table), Redis cache in front of reads with graceful degradation
 - RFC 9457 problem details for every failure mode
+- Ships as an Alpine-based Docker image (app included, not just its dependencies)
+- API contract: `openapi/savings-accounts-api.yaml`; acceptance suite: `hurl/`
 
 Documentation:
 
@@ -12,6 +14,25 @@ Documentation:
 |---|---|
 | `docs/ARCHITECTURE.md` | components, request flows, persistence & caching model |
 | `docs/DESIGN-TRADEOFFS.md` | every assumption and decision, with alternatives considered |
+| `openapi/savings-accounts-api.yaml` | OpenAPI 3.1 spec of the implemented surface |
+| `hurl/README.md` | the docker-run HTTP acceptance suite |
+
+## Quick start (docker, everything containerised)
+
+```bash
+docker compose up -d --build    # app + Postgres + Redis
+./hurl/run.sh                   # 18-request acceptance suite inside the hurl image
+```
+
+The API is on `${APP_HOST_PORT:-8080}`; Postgres/Redis host ports are
+`${PG_HOST_PORT:-5432}` / `${REDIS_HOST_PORT:-6379}`.
+
+## Quick start (host tooling)
+
+```bash
+docker compose up -d postgres redis   # or all three: docker compose up -d --build
+./gradlew bootRun                     # API on :8080
+```
 
 ## Prerequisites
 
@@ -71,11 +92,13 @@ identifiers, field-level authorisation) are documented in
 ## Test
 
 ```bash
-./gradlew test
+./gradlew test            # unit + Testcontainers integration suites (65 tests)
+./hurl/run.sh             # acceptance suite against a running stack (docker)
 ```
 
-Runs unit tests plus Testcontainers suites (real Postgres + Redis): end-to-end flow,
-concurrent quota enforcement, Redis-outage degradation, Postgres-outage 503s.
+Covers: end-to-end flow, concurrent quota enforcement, Redis-outage degradation,
+Postgres-outage 503s, lock contention, leet-vector screening, plus the docker
+acceptance suite asserting the OpenAPI contract over real HTTP.
 
 ## Project layout
 
@@ -86,4 +109,8 @@ src/main/java/com/takehome/savings/
 ├── domain/       SavingsAccount entity (single table)
 ├── repository/   Spring Data JPA + advisory-lock guard
 └── service/      business rules, account-number generation, offensive-word filter
+gradle/libs.versions.toml   single source of dependency versions
+Dockerfile                  multi-stage alpine build of the app itself
+openapi/                    OpenAPI 3.1 contract of the implemented surface
+hurl/                       docker-run acceptance suite
 ```

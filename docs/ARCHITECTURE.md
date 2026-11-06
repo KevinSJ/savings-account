@@ -54,6 +54,10 @@ A deliberately small, layered Spring Boot service: one business capability
 | `repository` | persistence, DB-specific statements (advisory lock) | business rules |
 | `config` | cache wiring | anything else |
 
+Build system: Gradle 9.8 Kotlin DSL; all dependency versions live in the
+`gradle/libs.versions.toml` version catalog (Boot BOM applied via `platform()`,
+no inline versions anywhere).
+
 The dependency direction is strictly inward. `AccountResponse` and
 `CreateAccountRequest` are records converted at the edge, so the wire contract can
 evolve without touching the entity.
@@ -132,6 +136,17 @@ Single table `savings_accounts` (see `src/main/resources/db/schema.sql`):
 Schema is owned by the application (`schema.sql`, `ddl-auto: none`). A real system
 would carry it in Flyway/Liquibase instead - noted as a TODO.
 
+## Packaging and delivery
+
+The application ships as a Docker image, per project requirement: multi-stage
+`Dockerfile` on Alpine bases - `eclipse-temurin:21-jdk-alpine` builds the jar,
+`eclipse-temurin:21-jre-alpine` runs it. The Boot jar is extracted with
+`jarmode=tools` so `lib/` (dependency jars) forms its own image layer; the
+container runs as a non-root `spring` user with a curl-based healthcheck and
+JVM tuned via `MaxRAMPercentage`. Compose wires the app to postgres/redis over
+the internal network (service names, never host-mapped ports) and exposes
+every host port as an overridable variable - dev boxes share 5432/6379.
+
 ## Testing pyramid
 
 | Level | Suite | Runs against |
@@ -141,6 +156,8 @@ would carry it in Flyway/Liquibase instead - noted as a TODO.
 | persistence | `SavingsAccountRepositoryIT` | Testcontainers Postgres |
 | end-to-end | `AccountFlowIT`, `ConcurrentAccountLimitIT` | real HTTP + Postgres + Redis |
 | resilience | `ResilienceDbDownIT`, `ResilienceCacheDownIT` | deliberately dead dependency ports |
+| acceptance | `hurl/api.hurl` (18 requests) inside the hurl container image | the composed stack, real HTTP |
+| contract | `openapi/savings-accounts-api.yaml` (hand-written, examples from live traffic) | reviewed against implementation |
 
 Testcontainers use the singleton-container pattern (one Postgres + one Redis per
 JVM, shared by all suites) to keep the build fast while still testing real
