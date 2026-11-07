@@ -2,6 +2,7 @@ package com.takehome.savings.api.dto;
 
 import com.takehome.savings.api.validation.NotOffensive;
 
+import io.swagger.v3.oas.annotations.media.Schema;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
 import jakarta.validation.constraints.Size;
@@ -20,15 +21,23 @@ import jakarta.validation.constraints.Size;
  *       so caller-supplied values cannot exist, let alone be trusted.</li>
  * </ul>
  */
+@Schema(description = """
+        Nickname is stripped before validation; a whitespace-only nickname is a 400, not an
+        absent nickname. Use null / omit the field for "no nickname".""")
 public record CreateAccountRequest(
 
+        @Schema(description = "Mandatory; letters, spaces, hyphens, apostrophes and periods only",
+                example = "Alice Tester", minLength = 1, maxLength = 100,
+                requiredMode = Schema.RequiredMode.REQUIRED)
         @NotBlank(message = "customerName is mandatory")
-        @Size(max = 100, message = "customerName must be at most 100 characters")
+        @Size(min = 1, max = 100, message = "customerName must be between 1 and 100 characters")
         @Pattern(
                 regexp = "[\\p{L}][\\p{L}\\p{M}'’. \\-]*",
                 message = "customerName may contain letters, spaces, hyphens, apostrophes and periods only")
         String customerName,
 
+        @Schema(description = "Optional human label, screened against the offensive-term list",
+                example = "rainy day", minLength = 5, maxLength = 30)
         @Size(min = 5, max = 30, message = "nickname must be between 5 and 30 characters")
         @NotOffensive
         String nickname) {

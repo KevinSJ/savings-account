@@ -4,16 +4,26 @@ import java.net.URI;
 import java.util.UUID;
 
 import com.takehome.savings.api.dto.AccountResponse;
-import com.takehome.savings.api.dto.CreateAccountResponse;
 import com.takehome.savings.api.dto.CreateAccountRequest;
+import com.takehome.savings.api.dto.CreateAccountResponse;
 import com.takehome.savings.domain.SavingsAccount;
 import com.takehome.savings.service.AccountService;
 
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.Parameter;
+import io.swagger.v3.oas.annotations.headers.Header;
+import io.swagger.v3.oas.annotations.media.Content;
+import io.swagger.v3.oas.annotations.media.Schema;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
+import io.swagger.v3.oas.annotations.responses.ApiResponses;
+import io.swagger.v3.oas.annotations.tags.Tag;
 import jakarta.validation.Valid;
 
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.http.CacheControl;
+import org.springframework.http.MediaType;
+import org.springframework.http.ProblemDetail;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -29,12 +39,33 @@ import org.springframework.web.util.UriComponentsBuilder;
  * <p>The controller is deliberately thin: validate the edge (bean validation on the
  * request record), translate domain results to/from wire records, and return correct
  * status codes. All business rules live in {@link AccountService}.
+ *
+ * <p>The OpenAPI annotations below are not decoration: they are the source the
+ * published contract is generated from ({@code ./gradlew generateOpenApi}). A change
+ * to a status code or a response type that is not reflected here is a contract bug.
  */
 @RestController
 @RequestMapping("/api/v1/accounts")
+@Tag(name = "accounts", description = "Savings account lifecycle (currently create + read)")
 public class AccountController {
 
     private static final Logger log = LoggerFactory.getLogger(AccountController.class);
+
+    private static final String NO_STORE_PRIVATE = "no-store, private";
+    private static final String PROBLEM = "application/problem+json";
+
+    private static final String DESC_VALIDATION_FAILURE =
+            "Request body failed validation; `issues` lists the offending fields";
+    private static final String DESC_MALFORMED_BODY =
+            "Body missing, not valid JSON, or a parameter in an unexpected format";
+    private static final String DESC_NOT_FOUND = "No account exists for that identifier";
+    private static final String DESC_LIMIT_REACHED =
+            "The customer already holds the maximum of 5 savings accounts";
+    private static final String DESC_UNAVAILABLE =
+            "Transient failure - datastore unavailable, advisory-lock contention, or a lost "
+            + "account-number allocation race. Always carries `retryable: true`.";
+    private static final String DESC_INTERNAL =
+            "Unexpected server error; details are logged, never returned";
 
     private final AccountService accountService;
 
@@ -48,6 +79,31 @@ public class AccountController {
      * {@code id} (opaque UUID) travels once, in the Location header.
      */
     @PostMapping
+    @Operation(
+            operationId = "createAccount",
+            summary = "Create a savings account",
+            description = """
+                    Creates a new account for the customer named in the body. `id` and
+                    `accountNumber` are generated server-side and can never be supplied by the
+                    caller. The response body carries the account number only; the generated
+                    `id` appears exactly once, in the `Location` header.""")
+    @ApiResponses({
+            @ApiResponse(responseCode = "201", description = "Account created",
+                    headers = @Header(name = "Location",
+                            description = "URL of the created account; the only place the generated id appears",
+                            schema = @Schema(type = "string",
+                                    example = "/api/v1/accounts/0b9e6c2e-1111-4a2b-9c3d-5e6f70899a0b")),
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                            schema = @Schema(implementation = CreateAccountResponse.class))),
+            @ApiResponse(responseCode = "400", description = DESC_VALIDATION_FAILURE + ". " + DESC_MALFORMED_BODY,
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "409", description = DESC_LIMIT_REACHED,
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "503", description = DESC_UNAVAILABLE,
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "500", description = DESC_INTERNAL,
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class)))
+    })
     public ResponseEntity<CreateAccountResponse> create(@Valid @RequestBody CreateAccountRequest request) {
         SavingsAccount created = accountService.create(request.customerName(), request.nickname());
         URI location = UriComponentsBuilder.fromPath("/api/v1/accounts/{id}")
@@ -64,7 +120,32 @@ public class AccountController {
      * data (customer name, account number); intermediaries must not retain it.
      */
     @GetMapping("/{id}")
-    public ResponseEntity<AccountResponse> get(@PathVariable UUID id) {
+    @Operation(
+            operationId = "getAccountById",
+            summary = "Fetch a savings account by its autogenerated id (opaque UUID value)",
+            description = """
+                    The path identifier is a random UUIDv4 (122 random bits); the internal
+                    sequential id is never exposed, so captured traffic cannot be enumerated.
+                    Served from Redis when cached, from Postgres otherwise; a dead Redis
+                    degrades silently to Postgres.""")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The account",
+                    headers = @Header(name = "Cache-Control",
+                            description = "Always `no-store, private` - the payload carries personal data",
+                            schema = @Schema(type = "string", example = NO_STORE_PRIVATE)),
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                            schema = @Schema(implementation = AccountResponse.class))),
+            @ApiResponse(responseCode = "400", description = "The id is not a well-formed UUID",
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = DESC_NOT_FOUND,
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "503", description = DESC_UNAVAILABLE,
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    public ResponseEntity<AccountResponse> get(
+            @Parameter(description = "Opaque external identifier (UUIDv4)",
+                    example = "0b9e6c2e-1111-4a2b-9c3d-5e6f70899a0b", required = true)
+            @PathVariable UUID id) {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore().cachePrivate())
                 .body(AccountResponse.from(accountService.getByUid(id)));
@@ -75,7 +156,32 @@ public class AccountController {
      * quote over a phone call.
      */
     @GetMapping("/by-number/{accountNumber}")
-    public ResponseEntity<AccountResponse> getByNumber(@PathVariable String accountNumber) {
+    @Operation(
+            operationId = "getAccountByNumber",
+            summary = "Fetch a savings account by its public account number",
+            description = """
+                    The number customers quote over the phone. Lookups share the Redis cache
+                    with id lookups (`number:` key namespace) and degrade to Postgres when
+                    Redis is unavailable.""")
+    @ApiResponses({
+            @ApiResponse(responseCode = "200", description = "The account",
+                    headers = @Header(name = "Cache-Control",
+                            description = "Always `no-store, private` - the payload carries personal data",
+                            schema = @Schema(type = "string", example = NO_STORE_PRIVATE)),
+                    content = @Content(mediaType = MediaType.APPLICATION_JSON_VALUE,
+                            schema = @Schema(implementation = AccountResponse.class))),
+            @ApiResponse(responseCode = "400", description = "The account number is not a shape the API issues",
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "404", description = DESC_NOT_FOUND,
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class))),
+            @ApiResponse(responseCode = "503", description = DESC_UNAVAILABLE,
+                    content = @Content(mediaType = PROBLEM, schema = @Schema(implementation = ProblemDetail.class)))
+    })
+    public ResponseEntity<AccountResponse> getByNumber(
+            @Parameter(description = "12-digit account number; last digit is a Luhn check digit",
+                    required = true,
+                    schema = @Schema(type = "string", example = "325748979052"))
+            @PathVariable String accountNumber) {
         return ResponseEntity.ok()
                 .cacheControl(CacheControl.noStore().cachePrivate())
                 .body(AccountResponse.from(accountService.getByAccountNumber(accountNumber)));

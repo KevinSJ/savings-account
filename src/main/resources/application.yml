@@ -36,6 +36,17 @@ spring:
       timeout: 1s
       connect-timeout: 1s
 
+springdoc:
+  api-docs:
+    # The checked-in contract (openapi/savings-accounts-api.yaml) is generated from
+    # this endpoint by `./gradlew generateOpenApi` - never hand-written.
+    path: /v3/api-docs
+    version: openapi_3_1
+  # No Swagger UI: the exercise has no authn/authz, so a browsable console would be
+  # an unauthenticated write surface. The document is served, the UI is not.
+  swagger-ui:
+    enabled: false
+
 server:
   port: 8080
   shutdown: graceful

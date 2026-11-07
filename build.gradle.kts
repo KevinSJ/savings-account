@@ -45,6 +45,10 @@ dependencies {
     // Observability: health probes include DataSource/Redis readiness
     implementation(libs.spring.boot.starter.actuator)
 
+    // OpenAPI: the contract in openapi/ is generated from these annotations,
+    // never hand-maintained (see tasks.generateOpenApi below).
+    implementation(libs.springdoc.openapi.starter.webmvc.api)
+
     testImplementation(platform(libs.spring.boot.dependencies))
     testImplementation(libs.spring.boot.test)
     testImplementation(libs.spring.boot.webmvc.test)
@@ -66,6 +70,29 @@ tasks.jar {
 
 tasks.bootJar {
     archiveFileName = "app.jar"
+}
+
+// Regenerates openapi/savings-accounts-api.yaml from the running application.
+// The generated document is the contract; it is never edited by hand.
+tasks.register<Exec>("generateOpenApi") {
+    group = "documentation"
+    description = "Regenerates openapi/savings-accounts-api.yaml from the application (needs Docker)."
+    dependsOn(tasks.bootJar)
+    environment("SKIP_BUILD", "1")
+    commandLine("bash", "scripts/generate-openapi.sh")
+}
+
+// Fails when the committed contract is stale. "Generated, so it cannot drift" is
+// only true if something checks: regenerating is discipline, this is the gate.
+// Wire it up in CI (it needs Docker, because the document is rendered by a
+// running instance). Deliberately not part of `check`: that would put a container
+// startup in the inner loop.
+tasks.register<Exec>("verifyOpenApi") {
+    group = "verification"
+    description = "Regenerates the contract and fails if the committed file differs."
+    dependsOn(tasks.bootJar)
+    environment("SKIP_BUILD", "1")
+    commandLine("bash", "-c", "scripts/generate-openapi.sh && git diff --exit-code -- openapi/")
 }
 
 tasks.withType<Test> {

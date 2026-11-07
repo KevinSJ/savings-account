@@ -1,9 +1,4 @@
-# Security recommendations (bank-grade lens)
-
-Kevin's framing for this exercise: "assume this is a bank-grade API - even as
-practice, security has to be considered." This note separates what the code
-already enforces from what a production rollout must add, with the threat each
-item answers. Order is by severity-weighted payoff.
+# Security recommendations
 
 ## Already implemented in this repository
 

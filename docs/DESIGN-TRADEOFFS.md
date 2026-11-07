@@ -164,12 +164,42 @@ BOM application). Costs absorbed and worth knowing:
   (`RestTemplateBuilder` left the core jar);
 - Jackson 3 (`tools.jackson`) replaces Jackson 2 - the Redis serialiser moved
   to the Jackson3 `JacksonJsonRedisSerializer` over Boot's own `ObjectMapper`.
-Choice made for the API contract: a hand-written OpenAPI 3.1 document instead
-of springdoc generation. Rationale: zero runtime coupling, spec stays honest
-about exactly the implemented surface (including status codes and the
-problems taxonomy), and examples were captured from live traffic. Trade-off:
-the spec can drift from code; the hurl suite is the executable check that
-aligns them.
+Choice made for the API contract: **generated from the code with springdoc**, not
+hand-written. This reverses an earlier decision, and the reversal is the
+interesting part. The first revision was a hand-maintained OpenAPI 3.1 document
+(its stated rationale: zero runtime coupling, and a human deciding exactly what
+to promise). It drifted, on the first endpoint anyone would test: the document
+declared `pattern: ^[0-9]{12}$` on the by-number path, while
+`LuhnAccountNumberGenerator.isLuhnValid` only checks "all digits" plus the
+checksum - so a 2-digit number passed the shape check and came back as a 404
+instead of the documented 400. A hand-written contract is a hypothesis about the
+code that nothing re-tests; a doc-only defect that no test can fail is the worst
+kind, because the hurl suite happily asserted the parts someone remembered to
+write down.
+
+Now the annotations on the controller and the DTOs are the single source, and
+`./gradlew generateOpenApi` re-renders `openapi/savings-accounts-api.yaml` from
+a running instance (throwaway Postgres/Redis, dedicated ports). The document
+cannot describe an endpoint that does not exist, and a status code that changes
+in code changes in the contract in the same commit.
+
+Costs accepted: springdoc joins the runtime classpath (a documentation dependency
+in a payment service is a real supply-chain surface - version-pinned in the
+catalog, and `/v3/api-docs` is one more endpoint to put behind the gateway);
+annotation verbosity becomes the limiting factor on description quality, so the
+RFC 9457 extension members are documented in one `OpenApiCustomizer` instead of
+in prose; and Swagger UI is deliberately left disabled, because an unauthenticated
+console is an unauthenticated write surface. Generation is still an honour system
+on its own - `./gradlew verifyOpenApi` regenerates and fails on any diff, which is
+the CI gate that turns "generated from the code" into "committed in step with the
+code" (kept out of `check` so the inner loop does not start containers). One
+annotation had to be tightened for the generator to be truthful at all:
+`customerName` carries `@Size(min = 1, max = 100)` rather than `@Size(max = 100)`,
+because springdoc derives `minLength` from the bean-validation annotation and
+ignores an explicit `@Schema(minLength = 1)` - the first generated document
+advertised `minLength: 0`, i.e. an empty name as contract-valid. The hurl suite still earns its
+keep - it is now the executable check on the *generated* document rather than the
+only thing keeping a hand-written one honest.
 
 ### D10 - Opaque external identity: UUIDv4, not a salted hash (post-review, Kevin's call)
 

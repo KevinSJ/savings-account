@@ -6,7 +6,7 @@ Spring Boot REST API that creates and reads savings bank accounts.
 - PostgreSQL (single table), Redis cache in front of reads with graceful degradation
 - RFC 9457 problem details for every failure mode
 - Ships as an Alpine-based Docker image (app included, not just its dependencies)
-- API contract: `openapi/savings-accounts-api.yaml`; acceptance suite: `hurl/`
+- API contract: `openapi/savings-accounts-api.yaml`, generated from the code; acceptance suite: `hurl/`
 
 Documentation:
 
@@ -14,7 +14,7 @@ Documentation:
 |---|---|
 | `docs/ARCHITECTURE.md` | components, request flows, persistence & caching model |
 | `docs/DESIGN-TRADEOFFS.md` | every assumption and decision, with alternatives considered |
-| `openapi/savings-accounts-api.yaml` | OpenAPI 3.1 spec of the implemented surface |
+| `openapi/savings-accounts-api.yaml` | OpenAPI 3.1 contract, generated from the code (`./gradlew generateOpenApi`) |
 | `docs/SECURITY-RECOMMENDATIONS.md` | bank-grade security posture: shipped controls + ranked production additions |
 | `hurl/README.md` | the docker-run HTTP acceptance suite |
 
@@ -80,7 +80,7 @@ The GET response is exactly the specified account data model: `id` (autogenerate
 opaque UUID value), `accountNumber`, `customerName`, optional `nickname`.
 Responses carry `Cache-Control: no-store, private` (personal data).
 
-## Security posture (exercise scope)
+## Security posture
 
 There is no authn/authz: the exercise defines no security actors. The worst
 enumeration vector - the sequential id - was eliminated (opaque random UUID in
@@ -94,10 +94,24 @@ documented as future work rather than faked.
   degrades silently to Postgres
 - `404` problem document for unknown ids
 
+## Regenerate the API contract
+
+```bash
+./gradlew generateOpenApi   # throwaway Postgres/Redis on :55432/:56379, writes the YAML
+./gradlew verifyOpenApi     # regenerates and fails if the committed YAML differs (CI gate)
+```
+
+The contract is derived from the springdoc annotations on `AccountController` and
+the DTOs, so the checked-in YAML is a build artifact kept in the repo for
+reviewers. Never edit it by hand: change the annotations and regenerate. The
+service also serves the live document at `/v3/api-docs` (`/v3/api-docs.yaml` for
+YAML); Swagger UI is deliberately not enabled - the exercise has no auth layer,
+and a browsable console would be an unauthenticated surface.
+
 ## Test
 
 ```bash
-./gradlew test            # unit + Testcontainers integration suites (65 tests)
+./gradlew test            # unit + Testcontainers integration suites (63 tests)
 ./hurl/run.sh             # acceptance suite against a running stack (docker)
 ```
 
@@ -116,6 +130,6 @@ src/main/java/com/takehome/savings/
 └── service/      business rules, account-number generation, offensive-word filter
 gradle/libs.versions.toml   single source of dependency versions
 Dockerfile                  multi-stage alpine build of the app itself
-openapi/                    OpenAPI 3.1 contract of the implemented surface
+openapi/                    OpenAPI 3.1 contract, generated from the code
 hurl/                       docker-run acceptance suite
 ```
