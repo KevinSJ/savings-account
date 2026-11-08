@@ -1,26 +1,28 @@
 # syntax=docker/dockerfile:1
 
 # ---------------------------------------------------------------------------
-# Build stage: full JDK + Gradle toolchain, dependencies cached by Gradle.
-# Alpine base per project requirement; temurin ships alpine variants.
+# Build stage: official Gradle image (Alpine + JDK 21 + Gradle already
+# installed), so the image build never downloads a Gradle distribution from the
+# network. Keep this tag in sync with gradle/wrapper/gradle-wrapper.properties.
 # ---------------------------------------------------------------------------
-FROM eclipse-temurin:21-jdk-alpine AS build
+FROM gradle:9.8.2-jdk21-alpine AS build
 WORKDIR /workspace
 
 # Copy only the build definition first so dependency layers stay cached
 # across source-only changes (classic Docker layer-order discipline).
-COPY gradlew gradlew.bat settings.gradle.kts build.gradle.kts gradle.properties ./
+# gradle/ supplies libs.versions.toml, the version catalog the build relies on.
+COPY settings.gradle.kts build.gradle.kts gradle.properties ./
 COPY gradle/ gradle/
 
 # A warm-up run: resolves everything the project needs. Cheap after the first
 # push, decisive for CI cache hits afterwards.
-RUN ./gradlew --no-daemon dependencies > /dev/null 2>&1 || true
+RUN gradle --no-daemon dependencies > /dev/null 2>&1 || true
 
 COPY src/ src/
 # --no-daemon: single-shot build, no daemon to leave behind.
 # -x test: image builds publish code that the CI suite has gated; keeping test
 # execution here would make the image build double as a flaky test runner.
-RUN ./gradlew --no-daemon bootJar -x test
+RUN gradle --no-daemon bootJar -x test
 
 # ---------------------------------------------------------------------------
 # Runtime stage: JRE only, layered jar (fewer bytes shipped per release),
