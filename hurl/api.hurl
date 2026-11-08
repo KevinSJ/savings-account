@@ -42,6 +42,22 @@ jsonpath "$.accountNumber" matches /^\d{12}$/
 # (create-body minimality - no id field - is pinned by the JVM web-slice test,
 #  which asserts $.id doesNotExist directly; hurl 8 has no body-query predicate)
 
+
+POST http://{{host}}:8080/api/v1/accounts
+Content-Type: application/json
+
+{
+  "customerName": "Hurl Harold-{{suffix}}"
+}
+
+HTTP 201
+[Captures]
+accountId: header "Location"
+accountNumber: jsonpath "$.accountNumber"
+[Asserts]
+header "Location" matches "^/api/v1/accounts/[0-9a-f-]{36}$"
+jsonpath "$.accountNumber" matches /^\d{12}$/
+
 # --- fetch by opaque id (full data model) --------------------------------------
 
 GET http://{{host}}:8080{{accountId}}
